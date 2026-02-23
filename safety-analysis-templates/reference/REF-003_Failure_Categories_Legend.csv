@@ -1,0 +1,7 @@
+Failure Category,Abbreviation,Description,SPFM Relevance,LFM Relevance,ASIL B Target (%),ASIL C Target (%),ASIL D Target (%),ISO 26262 Reference
+Safe Fault,Safe,"Fault that does not contribute to a violation of a safety goal",Not counted,Not counted,N/A,N/A,N/A,"ISO 26262-5, Clause 8"
+Single-Point Fault,SPF,"Fault in a non-redundant element without a safety mechanism that directly leads to a safety goal violation",Counted against SPFM,Not counted,>=90,>=97,>=99,"ISO 26262-5, Table 4"
+Residual Fault,RF,"Portion of a fault not covered by a safety mechanism in a non-redundant element",Counted against SPFM,Not counted,>=90,>=97,>=99,"ISO 26262-5, Table 4"
+Multiple-Point Fault Detected,MPF-D,"Fault detected by a safety mechanism that requires a second independent fault for a safety goal violation",Not counted (detected),Counted for LFM,N/A,N/A,N/A,"ISO 26262-5, Clause 8"
+Multiple-Point Fault Perceived,MPF-P,"Fault perceived by the driver that requires a second independent fault for a safety goal violation",Not counted (perceived),Counted for LFM,N/A,N/A,N/A,"ISO 26262-5, Clause 8"
+Multiple-Point Fault Latent,MPF-L,"Undetected fault that requires a second independent fault for a safety goal violation",Not counted,Counted against LFM,>=60,>=80,>=90,"ISO 26262-5, Table 5"
