@@ -32,6 +32,8 @@
 | Version | Date | Author | Change Description |
 |---------|------|--------|--------------------|
 | 0.1 | 2026-02-22 | Safety Engineering | Initial draft — all 15 sections |
+| 0.2 | 2026-02-22 | Safety Engineering | Added TSR-AIQL-014 (Single-Ended Plausibility Check); updated FM-05/FM-06 coverage; added FI-10; updated traceability |
+| 0.3 | 2026-02-22 | Safety Engineering | Scoped AIQL to audio I/O qualification only; audio designated as secondary safety sensor (primary: camera/lidar/radar); removed TSR-AIQL-006 (cross-modal plausibility) and TSR-AIQL-014 (single-ended plausibility) — classifier correctness addressed at system level by Alpamayo multi-sensor fusion; removed camera interface; simplified safe state |
 
 ---
 
@@ -41,13 +43,14 @@
 
 This Technical Safety Concept (TSC) defines the **Audio Input Qualification Layer (AIQL)** — an ASIL B software component at the boundary between the QM-rated audio subsystem and the ASIL-rated Alpamayo end-to-end autonomous vehicle foundation model.
 
-The AIQL qualifies QM audio input by implementing safety mechanisms that detect, contain, and mitigate all identified failure modes in the audio input path. This follows the element-out-of-context (SEooC) integration approach per ISO 26262-8 Clause 12.
+Audio is designated as a **secondary safety sensor**. The primary sensors for emergency vehicle detection and all driving decisions are camera, LiDAR, and radar. Audio provides supplementary siren/horn detection that enhances overall detection confidence but is not the sole or primary input for any safety-critical decision. Alpamayo's multi-sensor fusion architecture is responsible for combining all sensor inputs and determining the appropriate driving response.
+
+The AIQL qualifies QM audio input at the I/O boundary by implementing safety mechanisms that detect, contain, and mitigate data integrity failure modes in the audio input path. This follows the element-out-of-context (SEooC) integration approach per ISO 26262-8 Clause 12.
 
 #### In Scope
 
 - Qualification of the audio data stream at the Alpamayo input boundary
 - Freshness, integrity, sequence, and range validation of audio frames
-- Cross-modal plausibility checking with camera (emergency vehicle light detection)
 - Safe state definition and graceful degradation strategy
 - Temporal and spatial Freedom From Interference (FFI) mechanisms
 - Fault injection verification campaign for the AIQL
@@ -58,7 +61,8 @@ The AIQL qualifies QM audio input by implementing safety mechanisms that detect,
 - Design or modification of the QM audio hardware (microphones, codec, amplifiers)
 - Design or modification of the QM audio driver or DSP firmware
 - The siren/horn classifier algorithm itself (treated as QM element with AoUs)
-- Camera-side emergency vehicle light detection algorithm (separate TSC)
+- Classifier correctness validation (semantic accuracy of siren/horn detection is a system-level concern addressed by Alpamayo's multi-sensor fusion with primary sensors)
+- Cross-modal plausibility checking with camera or other sensors (sensor fusion is Alpamayo's responsibility)
 - Alpamayo model internals beyond the audio input interface
 - Non-safety audio functions (in-cabin entertainment, voice commands)
 - Cybersecurity requirements for the audio path (addressed in separate cybersecurity concept)
@@ -69,11 +73,12 @@ Alpamayo (NVIDIA's end-to-end AV foundation model) receives audio input for sire
 
 Without qualification, unqualified audio input creates Freedom From Interference (FFI) issues within Alpamayo. Specifically:
 
-1. **Corrupted audio data** could cause false siren detections, triggering unwarranted yielding maneuvers
-2. **Missing or stale audio data** could cause missed siren detections, failing to yield to emergency vehicles
-3. **Systematic misclassification** by the QM classifier could produce persistent false positives or negatives
+1. **Corrupted audio data** could inject erroneous siren/horn signals into Alpamayo's fusion layer, degrading fusion confidence
+2. **Missing or stale audio data** could cause Alpamayo to operate with outdated supplementary information without awareness of its invalidity
 
-The AIQL resolves these FFI issues by implementing ASIL B safety mechanisms at the boundary, qualifying the QM audio input before it enters Alpamayo's safety-critical decision path. This avoids the prohibitively expensive alternative of developing the entire audio hardware and software stack to ASIL B.
+The AIQL resolves these FFI issues by implementing ASIL B safety mechanisms at the I/O boundary, qualifying the QM audio input before it enters Alpamayo's sensor fusion layer. The AIQL ensures that audio data entering Alpamayo is fresh, intact, and within expected ranges — or explicitly marked as not qualified so Alpamayo can exclude it from fusion. This avoids the prohibitively expensive alternative of developing the entire audio hardware and software stack to ASIL B.
+
+**Note**: Classifier correctness (whether the siren/horn classifier accurately identifies emergency vehicle audio) is a system-level concern. Because audio is a secondary sensor, misclassification is mitigated by Alpamayo's multi-sensor fusion with primary sensors (camera, LiDAR, radar), not by the AIQL.
 
 ### 2.3 Boundary Definition
 
@@ -137,16 +142,16 @@ The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-
               +===============================================+   |           |
               | AIQL Internal Architecture                        |           |
               |                                                   |           |
-              | +-------------+  +---------------+  +---------+  |           |
-              | | Freshness & |  | Integrity &   |  | Cross-  |  |           |
-              | | Alive Check |  | Range Check   |  | Modal   |  |           |
-              | |             |  |               |  | Plausi- |  |           |
-              | | - Timestamp |  | - CRC-32      |  | bility  |  |           |
-              | | - Alive Ctr |  | - Seq Counter |  | Check   |  |           |
-              | | - Freshness |  | - Range Valid |  | (Camera)|  |           |
-              | +------+------+  +-------+-------+  +----+----+  |           |
-              |        |                 |                |       |           |
-              |        v                 v                v       |           |
+              | +-------------+  +---------------+                          |
+              | | Freshness & |  | Integrity &   |                          |
+              | | Alive Check |  | Range Check   |                          |
+              | |             |  |               |                          |
+              | | - Timestamp |  | - CRC-32      |                          |
+              | | - Alive Ctr |  | - Seq Counter |                          |
+              | | - Freshness |  | - Range Valid |                          |
+              | +------+------+  +-------+-------+                          |
+              |        |                 |                                   |
+              |        v                 v                                   |
               | +------------------------------------------------+--+        |
               | | Qualification Decision & State Machine            |        |
               | |                                                   |        |
@@ -188,7 +193,6 @@ The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-
 | `qualification_status` | enum8 | 1 | QUALIFIED (0x01), DEGRADED (0x02), NOT_QUALIFIED (0x03) |
 | `audio_data` | int16[] | variable | Original audio samples (pass-through when qualified) |
 | `classifier_output` | struct | 16 | Original classifier output (pass-through when qualified) |
-| `plausibility_flag` | bool8 | 1 | True if cross-modal plausibility confirmed |
 | `failure_flags` | uint16 | 2 | Bitfield of active failure detections (see 4.2.4) |
 | `aiql_crc32` | uint32 | 4 | CRC-32 over all AIQL output fields |
 
@@ -210,22 +214,11 @@ The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-
 | 2 | `FF_CRC` | CRC-32 integrity check failed |
 | 3 | `FF_SEQUENCE` | Sequence counter check failed |
 | 4 | `FF_RANGE` | Signal range validation failed |
-| 5 | `FF_PLAUSIBILITY` | Cross-modal plausibility check failed |
-| 6 | `FF_TIMEOUT` | Frame reception timeout |
-| 7 | `FF_OVERFLOW` | Input buffer overflow detected |
-| 8-15 | Reserved | Reserved for future use |
+| 5 | `FF_TIMEOUT` | Frame reception timeout |
+| 6 | `FF_OVERFLOW` | Input buffer overflow detected |
+| 7-15 | Reserved | Reserved for future use |
 
-### 4.3 Cross-Modal Interface: Camera → AIQL
-
-| Field | Type | Size (bytes) | Description |
-|-------|------|-------------|-------------|
-| `timestamp_us` | uint64 | 8 | Camera frame timestamp |
-| `emergency_lights_detected` | bool8 | 1 | True if flashing emergency lights detected in any camera |
-| `lights_bearing_deg` | float32 | 4 | Bearing to detected lights [-180, +180] |
-| `lights_confidence` | float32 | 4 | Detection confidence [0.0, 1.0] |
-| `camera_status` | enum8 | 1 | OPERATIONAL (0x01), DEGRADED (0x02), UNAVAILABLE (0x03) |
-
-### 4.4 Timing Architecture
+### 4.3 Timing Architecture
 
 ```
 Audio Frame Period: 50 ms (20 Hz frame rate)
@@ -258,6 +251,7 @@ FTTI Budget Allocation (500 ms total):
 | Safety Goal ID | SG-03 |
 | Item | Audio Input Path (Microphone → Codec → Driver → AIQL → Alpamayo) |
 | Hazardous Event | Failure to yield to approaching emergency vehicle due to undetected or misclassified siren/horn audio |
+| Sensor Role | **Secondary** — audio supplements primary sensors (camera, LiDAR, radar) for emergency vehicle detection. Alpamayo's multi-sensor fusion uses audio as an additional input channel; driving decisions are not solely dependent on audio. |
 | HARA Reference | HARA-0003 |
 
 ### 5.2 ASIL Determination
@@ -300,7 +294,7 @@ This is confirmed against ISO 26262-3 Table 4.
 
 1. **Developing situation**: Emergency vehicles approach from behind or sides over multiple seconds; yielding is not a collision-imminent event
 2. **Multiple detection opportunities**: At 20 Hz audio frame rate, 500 ms provides 10 audio frames for fault detection
-3. **Graceful degradation**: Vision-only fallback (camera detecting flashing lights) provides an independent detection channel during the FTTI window
+3. **Secondary sensor**: Audio is a supplementary input; primary sensors (camera, LiDAR, radar) continue emergency vehicle detection independently during the FTTI window. Loss of audio reduces fusion confidence but does not eliminate detection capability.
 4. **Vehicle dynamics**: Yielding involves lateral displacement (lane change) or controlled deceleration, both of which have response times on the order of seconds
 
 The 500 ms FTTI must be confirmed by system-level timing analysis (see Open Items, Section 14).
@@ -363,9 +357,9 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | Real siren present but classifier reports no siren |
 | **Failure Mechanism** | QM classifier systematic error; ambient noise masking; Doppler shift moving siren out of classifier frequency band; microphone sensitivity degradation |
-| **Effect on Alpamayo** | Failure to detect emergency vehicle — direct violation of SG-03 |
-| **Detection Mechanism** | Cross-modal plausibility (TSR-AIQL-006) — camera detects flashing lights but audio reports no siren |
-| **Safety Impact** | **Critical** — this is the primary hazard addressed by SG-03 |
+| **Effect on Alpamayo** | Reduced supplementary input for emergency vehicle detection — Alpamayo continues to detect via primary sensors (camera, LiDAR, radar) |
+| **Detection Mechanism** | **Not addressed by AIQL** — this is a classifier performance limitation, not a data integrity failure. As audio is a secondary sensor, FM-05 is mitigated at the system level by Alpamayo's multi-sensor fusion with primary sensors. The AIQL qualifies data integrity but does not validate classifier semantic correctness. |
+| **Safety Impact** | Low at AIQL level — primary sensors provide independent emergency vehicle detection. Residual risk: reduced detection confidence in scenarios where audio would have provided early warning (e.g., emergency vehicle approaching from behind a visual obstruction). |
 | **Frequency Estimate** | Medium-High (systematic failure; not quantifiable by FIT rate alone) |
 
 #### FM-06: False Positive (Phantom Siren Detection)
@@ -374,9 +368,9 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | No siren present but classifier reports siren detected |
 | **Failure Mechanism** | QM classifier systematic error; environmental sounds resembling sirens (construction equipment, musical instruments, other vehicle horns); acoustic reflections causing phantom source |
-| **Effect on Alpamayo** | Unwarranted yielding maneuver — availability impact, potential traffic disruption |
-| **Detection Mechanism** | Cross-modal plausibility (TSR-AIQL-006) — audio reports siren but camera detects no flashing lights |
-| **Safety Impact** | Moderate — unwarranted yielding is a nuisance but not directly hazardous at moderate speeds |
+| **Effect on Alpamayo** | Alpamayo receives false siren indication — effect is limited because audio is a secondary sensor and Alpamayo's fusion weighs primary sensor inputs (camera, LiDAR, radar) for driving decisions |
+| **Detection Mechanism** | **Not addressed by AIQL** — this is a classifier performance limitation, not a data integrity failure. As audio is a secondary sensor, FM-06 is mitigated at the system level by Alpamayo's multi-sensor fusion. Primary sensors provide independent confirmation; a false audio-only siren detection without corroborating primary sensor data will be downweighted by fusion. |
+| **Safety Impact** | Low — unwarranted yielding requires corroboration from primary sensors in Alpamayo's fusion architecture. Audio-only siren detection without primary sensor confirmation does not trigger yielding. |
 | **Frequency Estimate** | Medium (systematic failure; dependent on acoustic environment) |
 
 #### FM-07: Sequence Disorder
@@ -493,26 +487,14 @@ FFI analysis ensures that failures in the QM audio subsystem cannot propagate in
 | **Verification** | FI-05 |
 | **Acceptance Criterion** | Detection of all out-of-range conditions within 1 frame; zero false range violations for signals within specified bounds. |
 
-### TSR-AIQL-006: Cross-Modal Plausibility Check
-
-| Attribute | Value |
-|-----------|-------|
-| **ID** | TSR-AIQL-006 |
-| **Requirement** | The AIQL shall cross-check audio siren/horn detection against camera-based emergency vehicle light detection. When the audio classifier reports siren probability > 0.7 for more than 500 ms but the camera reports no emergency lights detected (with camera status OPERATIONAL), the AIQL shall set plausibility_flag to false and transition to DEGRADED state. When the camera reports emergency lights detected with high confidence (> 0.8) for more than 500 ms but audio reports siren probability < 0.3, the AIQL shall flag a potential false negative and log a diagnostic event. |
-| **ASIL** | B |
-| **Rationale** | Cross-modal plausibility is the **only safety mechanism** that can detect systematic misclassification by the QM siren classifier (FM-05, FM-06). CRC, freshness, and range checks verify data integrity but cannot detect a classifier that consistently misinterprets ambient sounds as sirens (or vice versa). The 500 ms correlation window accounts for timing differences between audio and visual detection and prevents false plausibility alarms from brief transient detections. |
-| **Failure Mode Addressed** | FM-05 (False Negative), FM-06 (False Positive) |
-| **Verification** | FI-06 |
-| **Acceptance Criterion** | False positive (audio-only siren without visual confirmation) flagged within 1000 ms of onset. False negative (visual-only lights without audio confirmation) logged within 1000 ms. Zero false plausibility alarms during nominal operation with no emergency vehicles. |
-
 ### TSR-AIQL-007: Graceful Degradation
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-007 |
-| **Requirement** | When the AIQL qualification state transitions to NOT_QUALIFIED, the AIQL shall: (a) Output qualification_status = NOT_QUALIFIED to Alpamayo; (b) Clear the audio_data and classifier_output fields (zero-fill); (c) Continue outputting frames at 20 Hz to maintain alive signaling; (d) Set all applicable failure_flags bits. Alpamayo shall switch to vision-only emergency vehicle detection upon receiving NOT_QUALIFIED status. |
+| **Requirement** | When the AIQL qualification state transitions to NOT_QUALIFIED, the AIQL shall: (a) Output qualification_status = NOT_QUALIFIED to Alpamayo; (b) Clear the audio_data and classifier_output fields (zero-fill); (c) Continue outputting frames at 20 Hz to maintain alive signaling; (d) Set all applicable failure_flags bits. Alpamayo shall exclude audio from sensor fusion and continue emergency vehicle detection using primary sensors (camera, LiDAR, radar) upon receiving NOT_QUALIFIED status. |
 | **ASIL** | B |
-| **Rationale** | Graceful degradation ensures that audio failures result in a deterministic fallback to vision-only detection rather than uncontrolled behavior. Zero-filling audio data prevents Alpamayo from using corrupted or stale data. Continued 20 Hz output ensures Alpamayo can distinguish "audio not qualified" from "AIQL has crashed." |
+| **Rationale** | Graceful degradation ensures that audio failures result in a deterministic exclusion of audio from Alpamayo's sensor fusion rather than uncontrolled behavior. Zero-filling audio data prevents Alpamayo from using corrupted or stale data. Continued 20 Hz output ensures Alpamayo can distinguish "audio not qualified" from "AIQL has crashed." As audio is a secondary sensor, the transition to primary-sensor-only operation is a minimal degradation. |
 | **Failure Mode Addressed** | FM-01 (Loss), FM-02 (Corruption), FM-03 (Staleness), FM-08 (Common Cause) |
 | **Verification** | FI-07 |
 | **Acceptance Criterion** | NOT_QUALIFIED status transmitted within 100 ms of state transition; zero non-zero audio data bytes in NOT_QUALIFIED frames. |
@@ -558,7 +540,7 @@ FFI analysis ensures that failures in the QM audio subsystem cannot propagate in
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-011 |
-| **Requirement** | The AIQL shall log all qualification state transitions, failure flag assertions/de-assertions, cross-modal plausibility events, and recovery events to a non-volatile diagnostic log with timestamp. The log shall be accessible for post-drive analysis and shall retain data for at least 100 drive cycles. |
+| **Requirement** | The AIQL shall log all qualification state transitions, failure flag assertions/de-assertions, and recovery events to a non-volatile diagnostic log with timestamp. The log shall be accessible for post-drive analysis and shall retain data for at least 100 drive cycles. |
 | **ASIL** | QM (diagnostic, not safety-critical) |
 | **Rationale** | Diagnostic logging supports field monitoring, SOTIF validation, and continuous improvement of the siren classifier. Logging is QM because it does not contribute to the safety mechanism — it supports post-hoc analysis only. |
 | **Failure Mode Addressed** | All (observability and field monitoring) |
@@ -598,7 +580,6 @@ FFI analysis ensures that failures in the QM audio subsystem cannot propagate in
 | TSR-AIQL-003 | CRC-32 Integrity | B | FM-02 | Communication |
 | TSR-AIQL-004 | Sequence Counter | B | FM-07 | Communication |
 | TSR-AIQL-005 | Range Validation | B | FM-04 | Communication |
-| TSR-AIQL-006 | Cross-Modal Plausibility | B | FM-05, FM-06 | — |
 | TSR-AIQL-007 | Graceful Degradation | B | FM-01, FM-02, FM-03, FM-08 | — |
 | TSR-AIQL-008 | Recovery Criteria | B | All | — |
 | TSR-AIQL-009 | WCET | B | Temporal FFI | Temporal |
@@ -629,7 +610,7 @@ Safety Goal SG-03: ASIL B
 
 This decomposition is valid under ISO 26262-9 Clause 5 because:
 
-1. **The ASIL B element (AIQL) implements all safety mechanisms necessary to detect and mitigate failures in the QM elements** — as enumerated in Section 7 (TSR-AIQL-001 through TSR-AIQL-013)
+1. **The ASIL B element (AIQL) implements all safety mechanisms necessary to detect and mitigate data integrity failures in the QM elements** — as enumerated in Section 7 (TSR-AIQL-001 through TSR-AIQL-005, TSR-AIQL-007 through TSR-AIQL-013). Classifier correctness (FM-05, FM-06) is addressed at the system level by Alpamayo's multi-sensor fusion with primary sensors, not by the AIQL.
 
 2. **The QM elements are not required to perform any safety function** — they provide audio data with Assumptions of Use (Section 9) but their failure is handled by the AIQL
 
@@ -676,7 +657,7 @@ Independence between the ASIL B AIQL and the QM audio subsystem is required per 
 | ASIL decomposition scheme documented | Yes — Section 8.1 |
 | Independence of decomposed elements argued | Yes — Section 8.2 |
 | Common cause failure analysis performed | Yes — Section 8.2.3 |
-| Sufficient safety mechanisms in higher-ASIL element | Yes — 13 TSRs (Section 7) |
+| Sufficient safety mechanisms in higher-ASIL element | Yes — 11 ASIL B TSRs + 1 QM TSR covering all data integrity failure modes (Section 7); classifier correctness addressed at system level |
 | QM element Assumptions of Use documented | Yes — Section 9 |
 
 ---
@@ -774,7 +755,7 @@ The QM audio subsystem is treated as a Safety Element out of Context (SEooC) per
 | **ID** | AoU-009 |
 | **Assumption** | The microphone array shall consist of at least 4 microphones with: (a) Sensitivity >= -38 dBV/Pa; (b) Signal-to-noise ratio >= 65 dB(A); (c) Frequency response covering 500 Hz to 3000 Hz (siren frequency range) with <= 3 dB variation; (d) Operating temperature range -40 C to +85 C. |
 | **Rationale** | The siren classifier performance depends on adequate audio quality. These specifications represent minimum requirements for reliable siren detection in typical urban environments. The AIQL cannot compensate for fundamentally inadequate audio hardware. |
-| **TSR Dependency** | TSR-AIQL-005 (noise floor check), TSR-AIQL-006 (classifier depends on audio quality) |
+| **TSR Dependency** | TSR-AIQL-005 (noise floor check) |
 | **Verification of AoU** | Microphone specification review; incoming inspection test; environmental qualification test |
 
 ### AoU-010: Self-Diagnostic Reporting
@@ -799,7 +780,7 @@ The QM audio subsystem is treated as a Safety Element out of Context (SEooC) per
 | AoU-006 | Memory Isolation | TSR-AIQL-012 | MPU fault injection, static analysis |
 | AoU-007 | CPU Budget | TSR-AIQL-013 | WCET analysis, runtime monitoring |
 | AoU-008 | Signal Range | TSR-AIQL-005 | Format verification, boundary values |
-| AoU-009 | Microphone Specs | TSR-AIQL-005, TSR-AIQL-006 | Spec review, environmental test |
+| AoU-009 | Microphone Specs | TSR-AIQL-005 | Spec review, environmental test |
 | AoU-010 | Self-Diagnostic | TSR-AIQL-011 | Fault injection |
 
 ---
@@ -840,8 +821,8 @@ The AIQL maintains a three-state qualification state machine that governs the sa
 |-----------|-------|
 | **Entry Condition** | All checks passing; sufficient consecutive valid frames received (10 from DEGRADED, 20 from NOT_QUALIFIED) |
 | **Behavior** | Audio data and classifier output passed through to Alpamayo with qualification_status = QUALIFIED |
-| **Alpamayo Action** | Audio-visual fusion for emergency vehicle detection (nominal mode) |
-| **Output** | Full audio frame + classifier output + plausibility_flag + qualification_status = QUALIFIED |
+| **Alpamayo Action** | Multi-sensor fusion with audio as supplementary input for emergency vehicle detection (nominal mode) |
+| **Output** | Full audio frame + classifier output + qualification_status = QUALIFIED |
 
 #### DEGRADED (Monitoring)
 
@@ -849,7 +830,7 @@ The AIQL maintains a three-state qualification state machine that governs the sa
 |-----------|-------|
 | **Entry Condition** | Any single qualification check failure while in QUALIFIED state |
 | **Behavior** | Audio data still passed through to Alpamayo with qualification_status = DEGRADED; failure_flags indicate which checks failed; AIQL monitors for recovery or further degradation |
-| **Alpamayo Action** | Reduced confidence in audio channel; increase weight on camera-based emergency vehicle detection; prepare for vision-only fallback |
+| **Alpamayo Action** | Reduced confidence in audio channel; increase weight on primary sensors (camera, LiDAR, radar) for emergency vehicle detection |
 | **Output** | Full audio frame + classifier output + failure_flags + qualification_status = DEGRADED |
 | **Escalation** | Transition to NOT_QUALIFIED after 3 consecutive frame failures OR frame reception timeout > 150 ms |
 
@@ -859,22 +840,22 @@ The AIQL maintains a three-state qualification state machine that governs the sa
 |-----------|-------|
 | **Entry Condition** | 3 consecutive frame failures in DEGRADED state; frame reception timeout > 150 ms; watchdog trigger; MPU violation detected |
 | **Behavior** | Audio data and classifier output zeroed out; qualification_status = NOT_QUALIFIED; continue 20 Hz output for liveness signaling |
-| **Alpamayo Action** | Vision-only emergency vehicle detection; camera-based flashing light detection is the sole emergency vehicle detection channel |
+| **Alpamayo Action** | Primary-sensor-only emergency vehicle detection; audio excluded from fusion. Primary sensors (camera, LiDAR, radar) continue normal operation. |
 | **Output** | Zero-filled audio + zero-filled classifier + all failure_flags set + qualification_status = NOT_QUALIFIED |
 | **Recovery** | Transition to DEGRADED after 20 consecutive valid frames (1000 ms) |
 
-### 10.3 Vision-Only Fallback
+### 10.3 Primary-Sensor-Only Fallback
 
-When the AIQL is in NOT_QUALIFIED state, Alpamayo relies exclusively on camera-based emergency vehicle detection:
+When the AIQL is in NOT_QUALIFIED state, Alpamayo continues emergency vehicle detection using primary sensors only:
 
-| Aspect | Vision-Only Mode |
-|--------|-----------------|
-| **Detection source** | Camera-based flashing light detection (separate subsystem) |
-| **Detection range** | Reduced compared to audio+visual fusion — effective at line-of-sight only |
-| **Limitation** | Cannot detect emergency vehicles around corners or behind obstacles (where audio would provide early warning) |
-| **SOTIF impact** | Increased residual risk from audio-specific triggering conditions (Section 12) — acceptable as temporary degraded mode |
+| Aspect | Primary-Sensor-Only Mode |
+|--------|-------------------------|
+| **Detection sources** | Camera (flashing lights, vehicle markings), LiDAR (vehicle shape/trajectory), radar (vehicle motion) |
+| **Detection capability** | Full primary sensor capability maintained — audio exclusion removes supplementary siren/horn data only |
+| **Limitation** | Reduced early warning for emergency vehicles not yet in line-of-sight (e.g., approaching from behind buildings at intersections, where audio would have provided advance notice) |
+| **Impact** | Minimal — primary sensors are the basis for all driving decisions. Audio supplements but does not gate emergency vehicle response. |
 | **Duration** | Until audio path recovers (AIQL transitions back to QUALIFIED) or until drive cycle ends |
-| **Driver notification** | HMI notification: "Audio detection system degraded — visual detection active" (if driver present) |
+| **Driver notification** | HMI notification: "Audio detection system degraded" (if driver present) |
 
 ### 10.4 FTTI Budget Allocation
 
@@ -886,8 +867,8 @@ The 500 ms FTTI is allocated across the degradation sequence:
 | Fault detection | <= 100 ms | 100 ms | AIQL detects fault (2 frame periods) |
 | State transition to DEGRADED | <= 50 ms | 150 ms | AIQL sets DEGRADED status |
 | State transition to NOT_QUALIFIED | <= 50 ms | 200 ms | If fault persists, AIQL sets NOT_QUALIFIED |
-| Alpamayo mode switch | <= 100 ms | 300 ms | Alpamayo switches to vision-only |
-| Vehicle response | <= 200 ms | 500 ms | Vehicle continues normal operation under vision-only |
+| Alpamayo fusion update | <= 100 ms | 300 ms | Alpamayo excludes audio from fusion, continues with primary sensors |
+| Vehicle response | <= 200 ms | 500 ms | Vehicle continues normal operation with primary sensors |
 
 **Note**: The FTTI budget is conservative. In practice, the AIQL will detect most faults within a single frame period (50 ms), providing additional margin.
 
@@ -913,7 +894,6 @@ The 500 ms FTTI is allocated across the degradation sequence:
 | CRC-32 computation | Statement 100% | Known CRC test vectors; single-bit error injection at every position |
 | Sequence counter validation | MC/DC >= 80% | Monotonic, non-monotonic, wraparound, duplicate, gap scenarios |
 | Range validation | MC/DC >= 80% | Boundary values for all 6 range checks; NaN/Inf injection |
-| Cross-modal plausibility | MC/DC >= 80% | All combinations of audio/camera detection with timing variations |
 | State machine | State/transition 100% | All 6 transitions (3 forward, 3 recovery); invalid transition attempts |
 | Recovery logic | MC/DC >= 80% | Consecutive valid frame counting; interrupted recovery sequences |
 
@@ -981,18 +961,6 @@ The following fault injection tests verify that the AIQL correctly detects and h
 | **Pass Criteria** | All out-of-range conditions detected within 1 frame; appropriate failure flag set; no false range violations for signals within specified bounds |
 | **Test Count** | 18 test cases (6 injection types x 3 severity levels) |
 
-#### FI-06: Cross-Modal Plausibility Violation
-
-| Attribute | Value |
-|-----------|-------|
-| **ID** | FI-06 |
-| **Objective** | Verify AIQL detects audio-visual plausibility violations |
-| **Failure Modes** | FM-05 (False Negative), FM-06 (False Positive) |
-| **TSRs Verified** | TSR-AIQL-006 (Cross-Modal Plausibility) |
-| **Injection Method** | (a) Audio reports siren probability 0.95 for 2 seconds while camera reports no emergency lights (simulated false positive); (b) Camera reports emergency lights confidence 0.95 for 2 seconds while audio reports siren probability 0.05 (simulated false negative); (c) Both modalities agree (positive control); (d) Camera status UNAVAILABLE during audio siren detection (degraded plausibility) |
-| **Pass Criteria** | False positive flagged within 1000 ms of onset; false negative logged within 1000 ms of onset; no false plausibility alarms during agreement; graceful handling of camera unavailability |
-| **Test Count** | 12 test cases |
-
 #### FI-07: State Machine Stress Test
 
 | Attribute | Value |
@@ -1038,11 +1006,12 @@ The following fault injection tests verify that the AIQL correctly detects and h
 | FI-03 | FM-02 | TSR-AIQL-003 | 20 | HiL |
 | FI-04 | FM-07 | TSR-AIQL-004 | 10 | HiL |
 | FI-05 | FM-04 | TSR-AIQL-005 | 18 | HiL |
-| FI-06 | FM-05, FM-06 | TSR-AIQL-006 | 12 | HiL |
-| FI-07 | All | TSR-AIQL-007, -008 | 15 | HiL |
+| FI-07 | All (data integrity) | TSR-AIQL-007, -008 | 15 | HiL |
 | FI-08 | FM-08 | TSR-AIQL-012 | 8 | HiL |
 | FI-09 | FM-08 | TSR-AIQL-013 | 8 | HiL |
-| **Total** | | | **111** | |
+| **Total** | | | **99** | |
+
+**Note**: FM-05 (False Negative) and FM-06 (False Positive) are classifier performance limitations addressed at the system level by Alpamayo's multi-sensor fusion with primary sensors. They are not covered by the AIQL fault injection campaign.
 
 ### 11.5 ASIL B Process Compliance Work Products
 
@@ -1074,9 +1043,9 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | **Functional Insufficiency** | QM siren classifier signal-to-noise ratio insufficient to detect siren in noise levels > 90 dB(A) |
 | **Hazardous Behavior** | Failure to detect approaching emergency vehicle — violates SG-03 |
 | **Scenario** | Urban construction zone with jackhammer noise at 100 dB(A); ambulance approaching from 200 m with siren at 123 dB(A) at 1 m (attenuated to ~70 dB(A) at 200 m); siren masked by construction noise |
-| **Risk Reduction** | Cross-modal plausibility (TSR-AIQL-006) provides camera-based detection as independent channel; ODD consideration: reduced audio detection range in high-noise environments is documented as known limitation |
-| **AIQL Response** | AIQL remains in QUALIFIED state (audio path is functioning correctly — the limitation is in detection capability, not data integrity). Plausibility check with camera provides backup detection channel. |
-| **Residual Risk** | Medium — high-noise environments with no visual line-of-sight to emergency vehicle (e.g., around corners) represent a residual risk. Mitigated by audio functioning as one of multiple detection modalities. |
+| **Risk Reduction** | **System-level mitigation**: Primary sensors (camera, LiDAR, radar) provide independent emergency vehicle detection via flashing lights, vehicle shape, and motion patterns. Audio masking does not affect primary sensor capability. ODD consideration: reduced audio detection range in high-noise environments is documented as a known limitation of the secondary sensor. |
+| **AIQL Response** | AIQL remains in QUALIFIED state — the audio I/O path is functioning correctly (data integrity is intact). The detection limitation is a classifier performance issue, not a data integrity failure. AIQL's range validation (TSR-AIQL-005) may detect if noise causes sustained saturation. |
+| **Residual Risk** | Low — audio is a secondary sensor. Primary sensors maintain full emergency vehicle detection capability regardless of ambient noise. |
 
 ### TC-AUDIO-02: Siren-Like Environmental Sounds
 
@@ -1086,9 +1055,9 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | **Functional Insufficiency** | QM siren classifier cannot reliably distinguish all siren-like sounds from actual emergency vehicle sirens |
 | **Hazardous Behavior** | False positive siren detection leading to unwarranted yielding maneuver — availability impact |
 | **Scenario** | Vehicle passing construction site with reversing alarm (1000 Hz pulsing tone); classifier reports siren probability 0.75; no emergency vehicle present |
-| **Risk Reduction** | Cross-modal plausibility (TSR-AIQL-006): camera confirms no flashing emergency lights, reducing false positive impact; plausibility_flag set to false informs Alpamayo to weight audio detection lower |
-| **AIQL Response** | AIQL transitions to DEGRADED after 500 ms of audio-only detection without camera confirmation (per TSR-AIQL-006 threshold). Alpamayo informed via qualification_status and plausibility_flag. |
-| **Residual Risk** | Low — cross-modal plausibility significantly reduces false positive rate. Brief false positives (< 500 ms) before plausibility check triggers are acceptable. |
+| **Risk Reduction** | **System-level mitigation**: Alpamayo's multi-sensor fusion weighs audio as a secondary input. A false siren detection from audio alone, without corroborating primary sensor evidence (flashing lights on camera, emergency vehicle shape on LiDAR), will be downweighted by fusion and will not trigger a yielding maneuver. |
+| **AIQL Response** | AIQL remains in QUALIFIED state — the audio I/O path is functioning correctly. The classifier output passes all range checks (probability within [0.0, 1.0]). False positive detection is a classifier performance issue addressed at the system level. |
+| **Residual Risk** | Low — audio is a secondary sensor. False audio-only siren detections do not independently trigger yielding; primary sensor corroboration is required by Alpamayo's fusion architecture. |
 
 ### TC-AUDIO-03: Doppler Shift
 
@@ -1098,9 +1067,9 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | **Functional Insufficiency** | QM siren classifier trained on stationary siren frequency profiles; Doppler-shifted frequencies may fall outside recognition band |
 | **Hazardous Behavior** | Delayed or missed siren detection when emergency vehicle approaches at high closing speed — potential SG-03 violation |
 | **Scenario** | Emergency vehicle approaching head-on at 120 km/h relative speed; siren fundamental at 1000 Hz shifted to ~1100 Hz; if classifier frequency band is narrowly tuned, shifted frequency may reduce detection confidence |
-| **Risk Reduction** | Classifier AoU should specify Doppler-robust frequency band (siren wail sweeps 500-1600 Hz; Doppler shift at max relative speed is ~10%); cross-modal plausibility provides backup; SOTIF validation testing with Doppler-shifted audio |
-| **AIQL Response** | AIQL cannot directly detect Doppler-related misclassification (this is a systematic limitation). Cross-modal plausibility (TSR-AIQL-006) is the primary mitigation. Diagnostic logging (TSR-AIQL-011) captures events for post-drive analysis. |
-| **Residual Risk** | Low — Doppler shift at typical urban speeds (< 60 km/h relative) is < 5%, well within siren wail sweep range. Higher relative speeds are less common in yielding scenarios. |
+| **Risk Reduction** | **System-level mitigation**: Primary sensors (camera, LiDAR, radar) detect emergency vehicles by visual/shape/motion characteristics unaffected by Doppler shift. Classifier AoU should specify Doppler-robust frequency band (siren wail sweeps 500-1600 Hz; Doppler shift at max relative speed is ~10%). SOTIF validation testing with Doppler-shifted audio. |
+| **AIQL Response** | AIQL cannot detect Doppler-related misclassification — this is a classifier performance limitation, not a data integrity failure. Diagnostic logging (TSR-AIQL-011) captures events for post-drive analysis. |
+| **Residual Risk** | Low — audio is a secondary sensor. Doppler shift at typical urban speeds (< 60 km/h relative) is < 5%, well within siren wail sweep range. Primary sensors unaffected by acoustic Doppler. |
 
 ### TC-AUDIO-04: Cabin Acoustic Insulation
 
@@ -1110,20 +1079,20 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | **Functional Insufficiency** | Microphone placement and sensitivity insufficient to capture attenuated siren audio with adequate SNR |
 | **Hazardous Behavior** | Reduced siren detection range — emergency vehicle must be closer before detection occurs, reducing available yielding time |
 | **Scenario** | Premium vehicle with laminated acoustic glass and ANC active; windows closed; exterior siren at 200 m attenuated by 15-20 dB through cabin; siren-to-noise ratio may be insufficient for detection |
-| **Risk Reduction** | AoU-009 specifies minimum microphone sensitivity and SNR; microphone placement on vehicle exterior (roof or mirror housings) rather than cabin interior; cross-modal plausibility provides camera-based detection |
-| **AIQL Response** | AIQL cannot distinguish low-amplitude siren from genuine absence of siren. Range validation (TSR-AIQL-005) noise floor check may detect if all microphones show unusually low signal levels, but this is a sensitivity limitation, not a fault. Cross-modal plausibility is the primary mitigation. |
-| **Residual Risk** | Medium — exterior microphone placement mitigates cabin insulation but introduces weather exposure. Design trade-off between microphone placement and environmental robustness is an open item. |
+| **Risk Reduction** | AoU-009 specifies minimum microphone sensitivity and SNR; microphone placement on vehicle exterior (roof or mirror housings) rather than cabin interior. **System-level mitigation**: Primary sensors (camera, LiDAR, radar) detect emergency vehicles by visual/shape/motion characteristics unaffected by cabin acoustic insulation. |
+| **AIQL Response** | AIQL cannot distinguish low-amplitude siren from genuine absence of siren. Range validation (TSR-AIQL-005) noise floor check may detect if all microphones show unusually low signal levels, but this is a sensitivity limitation, not a fault. |
+| **Residual Risk** | Low — audio is a secondary sensor. Primary sensors maintain full emergency vehicle detection capability regardless of cabin insulation. Exterior microphone placement mitigates cabin insulation but introduces weather exposure (design trade-off is an open item). |
 
 ### 12.1 SOTIF Summary
 
 | TC ID | Triggering Condition | Primary Mitigation | AIQL Mechanism | Residual Risk |
 |-------|---------------------|-------------------|----------------|---------------|
-| TC-AUDIO-01 | Ambient noise masking | Camera cross-check | TSR-AIQL-006 | Medium |
-| TC-AUDIO-02 | Siren-like sounds | Camera cross-check | TSR-AIQL-006 | Low |
-| TC-AUDIO-03 | Doppler shift | Wideband classifier | TSR-AIQL-006 | Low |
-| TC-AUDIO-04 | Cabin insulation | Exterior microphones | TSR-AIQL-006, AoU-009 | Medium |
+| TC-AUDIO-01 | Ambient noise masking | Primary sensors (system-level) | TSR-AIQL-005 (saturation detection) | Low |
+| TC-AUDIO-02 | Siren-like sounds | Primary sensors + fusion weighting (system-level) | None (classifier performance) | Low |
+| TC-AUDIO-03 | Doppler shift | Primary sensors (system-level) | None (classifier performance) | Low |
+| TC-AUDIO-04 | Cabin insulation | Primary sensors + exterior mic placement | AoU-009 | Low |
 
-**Key insight**: Cross-modal plausibility (TSR-AIQL-006) is the primary mitigation for all four SOTIF triggering conditions. This confirms the design decision that cross-modal checking is essential — it is the only mechanism that addresses systematic detection limitations without requiring ASIL development of the classifier.
+**Key insight**: Because audio is a secondary sensor, all four SOTIF triggering conditions have **low residual risk** — primary sensors (camera, LiDAR, radar) maintain full emergency vehicle detection capability regardless of audio performance limitations. The AIQL's scope is limited to data integrity qualification at the I/O boundary; classifier performance limitations are addressed at the system level by Alpamayo's multi-sensor fusion architecture. This is a fundamental advantage of the secondary-sensor designation: the audio path does not need to solve its own SOTIF triggering conditions in isolation.
 
 ---
 
@@ -1137,8 +1106,8 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | SG-03 | FM-02: Corruption | TSR-AIQL-003, TSR-AIQL-005, TSR-AIQL-007 | FI-03 |
 | SG-03 | FM-03: Staleness | TSR-AIQL-001, TSR-AIQL-002, TSR-AIQL-004, TSR-AIQL-007 | FI-01, FI-02 |
 | SG-03 | FM-04: Out-of-Range | TSR-AIQL-005 | FI-05 |
-| SG-03 | FM-05: False Negative | TSR-AIQL-006 | FI-06 |
-| SG-03 | FM-06: False Positive | TSR-AIQL-006 | FI-06 |
+| SG-03 | FM-05: False Negative | — (system-level: Alpamayo multi-sensor fusion) | — (system-level verification) |
+| SG-03 | FM-06: False Positive | — (system-level: Alpamayo multi-sensor fusion) | — (system-level verification) |
 | SG-03 | FM-07: Sequence Disorder | TSR-AIQL-004 | FI-04 |
 | SG-03 | FM-08: Common Cause | TSR-AIQL-012, TSR-AIQL-013, TSR-AIQL-007 | FI-07 |
 
@@ -1151,7 +1120,6 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | TSR-AIQL-003 (CRC-32) | AoU-001 (CRC Generation) | AIQL verifies CRC that QM driver computes |
 | TSR-AIQL-004 (Sequence Counter) | AoU-002 (Sequence Counter) | AIQL validates sequence that QM driver generates |
 | TSR-AIQL-005 (Range) | AoU-008 (Signal Range), AoU-009 (Mic Specs) | Range checks depend on defined data format and adequate hardware |
-| TSR-AIQL-006 (Cross-Modal) | — (independent of audio AoU) | Camera interface is separate from audio subsystem |
 | TSR-AIQL-007 (Degradation) | — | AIQL internal behavior; no AoU dependency |
 | TSR-AIQL-008 (Recovery) | AoU-005 (Frame Rate) | Recovery counting depends on known frame rate |
 | TSR-AIQL-009 (WCET) | AoU-007 (CPU Budget) | AIQL WCET must fit within total timing budget |
@@ -1170,12 +1138,14 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | FM-02 | 3 | TSR-AIQL-003, -005, -007 |
 | FM-03 | 4 | TSR-AIQL-001, -002, -004, -007 |
 | FM-04 | 1 | TSR-AIQL-005 |
-| FM-05 | 1 | TSR-AIQL-006 |
-| FM-06 | 1 | TSR-AIQL-006 |
+| FM-05 | 0* | — (system-level: Alpamayo multi-sensor fusion) |
+| FM-06 | 0* | — (system-level: Alpamayo multi-sensor fusion) |
 | FM-07 | 1 | TSR-AIQL-004 |
 | FM-08 | 3 | TSR-AIQL-007, -012, -013 |
 
-**Coverage check**: All 8 failure modes have at least 1 TSR. **PASS**
+*FM-05 and FM-06 are classifier performance limitations (not data integrity failures). As audio is a secondary sensor, these are addressed at the system level by Alpamayo's multi-sensor fusion with primary sensors (camera, LiDAR, radar) — not by the AIQL.
+
+**Coverage check**: All 6 data integrity failure modes (FM-01 through FM-04, FM-07, FM-08) have at least 1 AIQL TSR. FM-05 and FM-06 (classifier performance) are addressed at system level. **PASS**
 
 | TSR | FM Coverage Count | FM IDs |
 |-----|-------------------|--------|
@@ -1184,7 +1154,6 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | TSR-AIQL-003 | 1 | FM-02 |
 | TSR-AIQL-004 | 2 | FM-03, FM-07 |
 | TSR-AIQL-005 | 2 | FM-02, FM-04 |
-| TSR-AIQL-006 | 2 | FM-05, FM-06 |
 | TSR-AIQL-007 | 4 | FM-01, FM-02, FM-03, FM-08 |
 | TSR-AIQL-008 | 8 | All (recovery behavior) |
 | TSR-AIQL-009 | 0* | Temporal FFI (AIQL self-protection) |
@@ -1195,7 +1164,7 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 
 *TSR-AIQL-009, -010, -011 are cross-cutting requirements (WCET, process, diagnostics) that support the overall safety mechanism integrity rather than addressing specific failure modes.
 
-**Coverage check**: All 13 TSRs address at least 1 failure mode or serve a cross-cutting safety purpose. **PASS**
+**Coverage check**: All 12 TSRs address at least 1 failure mode or serve a cross-cutting safety purpose. **PASS**
 
 ### 13.4 Verification Coverage
 
@@ -1206,12 +1175,11 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | FI-03 | FM-02 | TSR-AIQL-003 |
 | FI-04 | FM-07 | TSR-AIQL-004 |
 | FI-05 | FM-04 | TSR-AIQL-005 |
-| FI-06 | FM-05, FM-06 | TSR-AIQL-006 |
-| FI-07 | All | TSR-AIQL-007, -008 |
+| FI-07 | All (data integrity) | TSR-AIQL-007, -008 |
 | FI-08 | FM-08 | TSR-AIQL-012 |
 | FI-09 | FM-08 | TSR-AIQL-013 |
 
-**Coverage check**: All failure modes covered by at least one fault injection test. **PASS**
+**Coverage check**: All data integrity failure modes (FM-01 through FM-04, FM-07, FM-08) covered by at least one fault injection test. FM-05/FM-06 verified at system level. **PASS**
 
 ---
 
@@ -1223,9 +1191,9 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | OI-02 | **HARA update for SG-03**: HARA-0003 row added (S2/E3/C2 → ASIL B). Requires formal HARA review board approval to baseline the new safety goal. | Safety Manager | High | TBD | Open |
 | OI-03 | **Target compute platform**: Confirm which NVIDIA SoC (Orin, Thor, or next-gen) will host the AIQL. WCET (TSR-AIQL-009) and MPU configuration (TSR-AIQL-012) are platform-dependent. | Platform Architecture | High | TBD | Open |
 | OI-04 | **Microphone array specifications**: Confirm microphone placement (exterior vs. cabin), count, model, and acoustic specifications. AoU-009 is based on assumed minimum requirements. | Audio HW Lead | Medium | TBD | Open |
-| OI-05 | **Camera emergency light detection API**: Finalize the interface specification for camera-based emergency vehicle light detection (Section 4.3). This is a cross-subsystem dependency for TSR-AIQL-006. | Perception Team + Safety Engineering | High | TBD | Open |
-| OI-06 | **Siren classifier output format**: Confirm the classifier output structure (Section 4.2.3) with the audio ML team. The direction-of-arrival field and confidence metric format need alignment. | Audio ML Team | Medium | TBD | Open |
-| OI-07 | **FTTI confirmation**: Validate the 500 ms FTTI through system-level timing analysis including worst-case audio processing latency, Alpamayo inference time, and vehicle dynamic response. Current allocation (Section 10.4) is preliminary. | System Safety + Vehicle Dynamics | High | TBD | Open |
+| OI-05 | **Siren classifier output format**: Confirm the classifier output structure (Section 4.2.3) with the audio ML team. The direction-of-arrival field and confidence metric format need alignment. | Audio ML Team | Medium | TBD | Open |
+| OI-06 | **FTTI confirmation**: Validate the 500 ms FTTI through system-level timing analysis including worst-case audio processing latency, Alpamayo inference time, and vehicle dynamic response. Current allocation (Section 10.4) is preliminary. | System Safety + Vehicle Dynamics | High | TBD | Open |
+| OI-07 | **System-level verification of FM-05/FM-06**: Verify that Alpamayo's multi-sensor fusion adequately mitigates classifier false negatives (FM-05) and false positives (FM-06) when audio is used as a secondary sensor. This is outside the AIQL scope but must be confirmed at the system level. | System Safety + Perception Team | High | TBD | Open |
 
 ---
 
@@ -1302,7 +1270,7 @@ The following table provides the evidence chain supporting the ASIL decompositio
 |--------------|-------------------|---------|--------|
 | Decomposition scheme | Part 9, 5.4.2 | ASIL B = ASIL B(AIQL) + QM(Audio) — documented in Section 8.1 | Complete |
 | Independence argument | Part 9, 5.4.3 | Hardware, software, and common cause analysis — documented in Section 8.2 | Complete |
-| Sufficient safety mechanisms | Part 9, 5.4.4 | 13 TSRs covering all 8 failure modes — documented in Section 7 | Complete |
+| Sufficient safety mechanisms | Part 9, 5.4.4 | 12 TSRs covering all data integrity failure modes — documented in Section 7; FM-05/FM-06 addressed at system level | Complete |
 | Assumptions of Use | Part 8, 12.4.2 | 10 AoUs on QM audio subsystem — documented in Section 9 | Complete |
 | FFI analysis | Part 9, 7 | Spatial, temporal, communication FFI — documented in Section 6.2 | Complete |
 | Dependent failure analysis | Part 9, 7 | Common cause analysis — documented in Section 8.2.3 | Complete |
@@ -1337,3 +1305,4 @@ The adapted E2E profile retains the CRC-32 and alive counter concepts from AUTOS
 *Document classification: Confidential*
 *ISO 26262:2018 compliance: Part 4 (Technical Safety Concept)*
 *ASIL: B*
+
