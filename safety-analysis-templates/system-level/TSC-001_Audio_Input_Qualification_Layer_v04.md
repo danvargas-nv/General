@@ -9,8 +9,8 @@
 | **ASIL Target** | ASIL B |
 | **Safety Goal** | SG-03 |
 | **HARA Reference** | HARA-0003 |
-| **Item** | Alpamayo End-to-End AV Foundation Model — Audio Input Path |
-| **Version** | 0.4 |
+| **Item** | NDAS DRIVE AV Stack — Audio Input Path (on DRIVE AGX Thor / Hyperion 10) |
+| **Version** | 0.5 |
 | **Status** | In Development |
 | **Author** | Safety Engineering |
 | **Created** | 2026-02-22 |
@@ -35,6 +35,7 @@
 | 0.2 | 2026-02-22 | Safety Engineering | Added TSR-AIQL-014 (Single-Ended Plausibility Check); updated FM-05/FM-06 coverage; added FI-10; updated traceability |
 | 0.3 | 2026-02-22 | Safety Engineering | Scoped AIQL to audio I/O qualification only; audio designated as secondary safety sensor (primary: camera/lidar/radar); removed TSR-AIQL-006 (cross-modal plausibility) and TSR-AIQL-014 (single-ended plausibility) — classifier correctness addressed at system level by Alpamayo multi-sensor fusion; removed camera interface; simplified safe state |
 | 0.4 | 2026-02-23 | Safety Engineering | Confirmed in-cabin microphone placement; added Speaker-Microphone Loopback BIST (Built-In Self-Test) with MRM transition; added TSR-AIQL-015 through -019; added FM-09/FM-10/FM-11; added AoU-011/AoU-012; added FI-10 through FI-14; added TC-AUDIO-05; added Appendix E (BIST architecture); updated traceability and coverage |
+| 0.5 | 2026-02-23 | Safety Engineering | Corrected platform architecture framing: Alpamayo is a foundation-model research layer above NDAS/DRIVE AV, not the direct runtime consumer. Replaced all "Alpamayo" runtime references with "NDAS DRIVE AV" (the on-vehicle perception pipeline on DRIVE AGX Thor / Hyperion 10). Updated Item field, boundary diagrams, safety goal, failure mode effects, TSRs, state machine, FFI analysis, V&V, SOTIF, traceability, open items, and glossary. Added NDAS, DRIVE AGX Thor, DRIVE Hyperion 10 to glossary. |
 
 ---
 
@@ -42,15 +43,17 @@
 
 ### 2.1 Scope
 
-This Technical Safety Concept (TSC) defines the **Audio Input Qualification Layer (AIQL)** — an ASIL B software component at the boundary between the QM-rated audio subsystem and the ASIL-rated Alpamayo end-to-end autonomous vehicle foundation model.
+This Technical Safety Concept (TSC) defines the **Audio Input Qualification Layer (AIQL)** — an ASIL B software component at the boundary between the QM-rated audio subsystem and the ASIL-rated NDAS DRIVE AV perception pipeline, running on the DRIVE AGX Thor compute platform within the DRIVE Hyperion 10 reference architecture.
 
-Audio is designated as a **secondary safety sensor**. The primary sensors for emergency vehicle detection and all driving decisions are camera, LiDAR, and radar. Audio provides supplementary siren/horn detection that enhances overall detection confidence but is not the sole or primary input for any safety-critical decision. Alpamayo's multi-sensor fusion architecture is responsible for combining all sensor inputs and determining the appropriate driving response.
+**Platform context**: Alpamayo is NVIDIA's foundation-model AV research layer that sits above NDAS/DRIVE AV. Alpamayo trains in the cloud (on DGX infrastructure) and produces distilled compact models that deploy into the NDAS DRIVE AV on-vehicle stack. The AIQL's downstream consumer is the NDAS DRIVE AV perception pipeline — not Alpamayo directly. Alpamayo-distilled models may run within that pipeline, but the system boundary for this TSC is the NDAS DRIVE AV interface.
+
+Audio is designated as a **secondary safety sensor**. The primary sensors for emergency vehicle detection and all driving decisions are camera, LiDAR, and radar. Audio provides supplementary siren/horn detection that enhances overall detection confidence but is not the sole or primary input for any safety-critical decision. NDAS DRIVE AV multi-sensor fusion architecture is responsible for combining all sensor inputs and determining the appropriate driving response.
 
 The AIQL qualifies QM audio input at the I/O boundary by implementing safety mechanisms that detect, contain, and mitigate data integrity failure modes in the audio input path. This follows the element-out-of-context (SEooC) integration approach per ISO 26262-8 Clause 12.
 
 #### In Scope
 
-- Qualification of the audio data stream at the Alpamayo input boundary
+- Qualification of the audio data stream at the NDAS DRIVE AV input boundary
 - Freshness, integrity, sequence, and range validation of audio frames
 - Safe state definition and graceful degradation strategy
 - Temporal and spatial Freedom From Interference (FFI) mechanisms
@@ -63,36 +66,37 @@ The AIQL qualifies QM audio input at the I/O boundary by implementing safety mec
 - Design or modification of the QM audio hardware (microphones, codec, amplifiers)
 - Design or modification of the QM audio driver or DSP firmware
 - The siren/horn classifier algorithm itself (treated as QM element with AoUs)
-- Classifier correctness validation (semantic accuracy of siren/horn detection is a system-level concern addressed by Alpamayo's multi-sensor fusion with primary sensors)
-- Cross-modal plausibility checking with camera or other sensors (sensor fusion is Alpamayo's responsibility)
-- Alpamayo model internals beyond the audio input interface
+- Classifier correctness validation (semantic accuracy of siren/horn detection is a system-level concern addressed by NDAS DRIVE AV multi-sensor fusion with primary sensors)
+- Cross-modal plausibility checking with camera or other sensors (sensor fusion is NDAS DRIVE AV's responsibility)
+- NDAS DRIVE AV internals beyond the audio input interface
+- Alpamayo foundation model training, distillation, or cloud infrastructure
 - Non-safety audio functions (in-cabin entertainment, voice commands)
 - Cybersecurity requirements for the audio path (addressed in separate cybersecurity concept)
 
 ### 2.2 Purpose
 
-Alpamayo (NVIDIA's end-to-end AV foundation model) receives audio input for siren/horn detection that influences safety-critical driving decisions — specifically, yielding to emergency vehicles. The audio hardware and software (microphone, codec, DSP, driver, classifier) are developed to QM (Quality Management) level.
+The NDAS DRIVE AV perception pipeline — running on DRIVE AGX Thor within the Hyperion 10 reference architecture — receives audio input for siren/horn detection that influences safety-critical driving decisions, specifically yielding to emergency vehicles. The perception pipeline may incorporate Alpamayo-distilled models, but from this TSC's perspective the system boundary is the NDAS DRIVE AV interface. The audio hardware and software (microphone, codec, DSP, driver, classifier) are developed to QM (Quality Management) level.
 
-Without qualification, unqualified audio input creates Freedom From Interference (FFI) issues within Alpamayo. Specifically:
+Without qualification, unqualified audio input creates Freedom From Interference (FFI) issues within the NDAS DRIVE AV stack. Specifically:
 
-1. **Corrupted audio data** could inject erroneous siren/horn signals into Alpamayo's fusion layer, degrading fusion confidence
-2. **Missing or stale audio data** could cause Alpamayo to operate with outdated supplementary information without awareness of its invalidity
+1. **Corrupted audio data** could inject erroneous siren/horn signals into NDAS DRIVE AV's fusion layer, degrading fusion confidence
+2. **Missing or stale audio data** could cause NDAS DRIVE AV to operate with outdated supplementary information without awareness of its invalidity
 
-The AIQL resolves these FFI issues by implementing ASIL B safety mechanisms at the I/O boundary, qualifying the QM audio input before it enters Alpamayo's sensor fusion layer. The AIQL ensures that audio data entering Alpamayo is fresh, intact, and within expected ranges — or explicitly marked as not qualified so Alpamayo can exclude it from fusion. This avoids the prohibitively expensive alternative of developing the entire audio hardware and software stack to ASIL B.
+The AIQL resolves these FFI issues by implementing ASIL B safety mechanisms at the I/O boundary, qualifying the QM audio input before it enters the NDAS DRIVE AV perception pipeline. The AIQL ensures that audio data entering NDAS DRIVE AV is fresh, intact, and within expected ranges — or explicitly marked as not qualified so the fusion layer can exclude it. This avoids the prohibitively expensive alternative of developing the entire audio hardware and software stack to ASIL B.
 
 Additionally, the AIQL incorporates a **Speaker-Microphone Loopback Built-In Self-Test (BIST)** — a pre-processing integrity verification mechanism. The BIST uses in-cabin speakers to play a known sine sweep signal that is picked up by the in-cabin microphones, allowing the AIQL to validate the complete acoustic-to-digital audio path before and during operation. On confirmed BIST failure, the vehicle initiates a Minimal Risk Maneuver (MRM) — a controlled stop — because BIST failure indicates a fundamental loss of audio path integrity that cannot be recovered through software-only mechanisms.
 
-**Note**: Classifier correctness (whether the siren/horn classifier accurately identifies emergency vehicle audio) is a system-level concern. Because audio is a secondary sensor, misclassification is mitigated by Alpamayo's multi-sensor fusion with primary sensors (camera, LiDAR, radar), not by the AIQL.
+**Note**: Classifier correctness (whether the siren/horn classifier accurately identifies emergency vehicle audio) is a system-level concern. Because audio is a secondary sensor, misclassification is mitigated by NDAS DRIVE AV multi-sensor fusion with primary sensors (camera, LiDAR, radar), not by the AIQL.
 
 ### 2.3 Boundary Definition
 
 ```
                     QM Boundary                          ASIL B Boundary
                     |                                    |
-  [In-Cabin   ] --> [Codec] --> [Audio Driver] --> [AIQL] --> [Alpamayo]
-  [Microphones]     |(ADC+DSP)|   (QM SW)          (ASILB)     (Mixed)
+  [In-Cabin   ] --> [Codec] --> [Audio Driver] --> [AIQL] --> [NDAS DRIVE AV]
+  [Microphones]     |(ADC+DSP)|   (QM SW)          (ASILB)   (ASIL, on Thor)
                     |                                    |
-     QM HW          QM SW        QM SW          ASIL B SW    ASIL (Mixed)
+     QM HW          QM SW        QM SW          ASIL B SW    ASIL (NDAS)
 
   [In-Cabin   ] <-- [Codec] <-- [BIST Signal  ] <-+
   [Speakers   ]     |(DAC)  |   | Generator    |   |
@@ -103,7 +107,7 @@ Additionally, the AIQL incorporates a **Speaker-Microphone Loopback Built-In Sel
                               (verified by AIQL spectral match)
 ```
 
-The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-rated Alpamayo system. All audio data entering Alpamayo passes through the AIQL — there is no bypass path.
+The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-rated NDAS DRIVE AV perception pipeline. All audio data entering NDAS DRIVE AV passes through the AIQL — there is no bypass path.
 
 ---
 
@@ -141,8 +145,8 @@ The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-
 
 ```
 +==============+     +============+     +=============+     +======+     +==========+
-|  In-Cabin    |---->|   Codec    |---->| Audio Driver|---->| AIQL |---->| Alpamayo |
-|  Microphone  |     | (ADC+DSP)  |     |  (QM SW)    |     |(ASILB)|    | (Mixed)  |
+|  In-Cabin    |---->|   Codec    |---->| Audio Driver|---->| AIQL |---->| NDAS     |
+|  Microphone  |     | (ADC+DSP)  |     |  (QM SW)    |     |(ASILB)|    | DRIVE AV |
 |  Array       |     +============+     +=============+     +======+     +==========+
 +==============+          |                   |               |   |           |
     ^ |                   |                   |               |   |           |
@@ -208,7 +212,7 @@ The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-
 
 **Total header size**: 42 bytes (fixed) + audio_data (variable) + classifier (16 bytes)
 
-#### 4.2.2 Output Interface: AIQL → Alpamayo
+#### 4.2.2 Output Interface: AIQL → NDAS DRIVE AV
 
 | Field | Type | Size (bytes) | Description |
 |-------|------|-------------|-------------|
@@ -264,7 +268,7 @@ Audio Frame Period: 50 ms (20 Hz frame rate)
 
 |<--- 50 ms frame period --->|
 |                             |
-[Audio Capture] [Processing] [AIQL Qualification] [Alpamayo Ingestion]
+[Audio Capture] [Processing] [AIQL Qualification] [NDAS DRIVE AV Ingestion]
 |<-- 20 ms --->|<-- 10 ms ->|<----- 5 ms ------>|<----- 5 ms ------->|
                                                                        |
                               10 ms margin for jitter and scheduling --+
@@ -272,7 +276,7 @@ Audio Frame Period: 50 ms (20 Hz frame rate)
 FTTI Budget Allocation (500 ms total):
   - Fault detection by AIQL:          <= 100 ms (2 audio frames)
   - State transition to DEGRADED:     <=  50 ms (1 frame)
-  - Alpamayo reaction (replan):       <= 150 ms
+  - NDAS DRIVE AV reaction (replan):  <= 150 ms
   - Vehicle dynamic response:         <= 200 ms
   Total:                                  500 ms
 
@@ -287,7 +291,7 @@ BIST Timing:
     - Burst signal (abbreviated sweep): 200 ms duration
     - Interval:                          every 60 seconds
     - Spectral match analysis:            50 ms
-    - Signal cancellation for Alpamayo:   within same 200 ms window
+    - Signal cancellation for NDAS DRIVE AV: within same 200 ms window
 ```
 
 ---
@@ -296,14 +300,14 @@ BIST Timing:
 
 ### 5.1 Safety Goal Definition
 
-**SG-03: The audio input path shall provide qualified siren/horn detection data to Alpamayo such that the autonomous vehicle can detect and yield to emergency vehicles within the operational design domain.**
+**SG-03: The audio input path shall provide qualified siren/horn detection data to the NDAS DRIVE AV perception pipeline such that the autonomous vehicle can detect and yield to emergency vehicles within the operational design domain.**
 
 | Attribute | Value |
 |-----------|-------|
 | Safety Goal ID | SG-03 |
-| Item | Audio Input Path (Microphone → Codec → Driver → AIQL → Alpamayo) |
+| Item | Audio Input Path (Microphone → Codec → Driver → AIQL → NDAS DRIVE AV) |
 | Hazardous Event | Failure to yield to approaching emergency vehicle due to undetected or misclassified siren/horn audio |
-| Sensor Role | **Secondary** — audio supplements primary sensors (camera, LiDAR, radar) for emergency vehicle detection. Alpamayo's multi-sensor fusion uses audio as an additional input channel; driving decisions are not solely dependent on audio. |
+| Sensor Role | **Secondary** — audio supplements primary sensors (camera, LiDAR, radar) for emergency vehicle detection. NDAS DRIVE AV multi-sensor fusion uses audio as an additional input channel; driving decisions are not solely dependent on audio. |
 | HARA Reference | HARA-0003 |
 
 ### 5.2 ASIL Determination
@@ -357,7 +361,7 @@ The 500 ms FTTI must be confirmed by system-level timing analysis (see Open Item
 
 ### 6.1 Audio Input Failure Mode Catalog
 
-The following failure modes are identified for the QM audio input path. Each failure mode is analyzed for its effect on Alpamayo's emergency vehicle detection capability.
+The following failure modes are identified for the QM audio input path. Each failure mode is analyzed for its effect on the NDAS DRIVE AV emergency vehicle detection capability.
 
 #### FM-01: Complete Loss of Audio Data
 
@@ -365,7 +369,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | No audio frames received by AIQL |
 | **Failure Mechanism** | Microphone hardware failure; codec power loss; driver crash; bus failure; memory allocation failure |
-| **Effect on Alpamayo** | Total loss of siren/horn detection; emergency vehicle detection relies solely on camera |
+| **Effect on NDAS DRIVE AV** | Total loss of siren/horn detection; emergency vehicle detection relies solely on camera |
 | **Detection Mechanism** | Frame reception timeout (TSR-AIQL-001), alive counter missing (TSR-AIQL-002); BIST loopback detection (TSR-AIQL-016); graceful degradation (TSR-AIQL-007) |
 | **Safety Impact** | Potential violation of SG-03 if camera-only detection is insufficient |
 | **Frequency Estimate** | Low (hardware failure rate ~500 FIT for complete path loss) |
@@ -376,7 +380,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | Audio frame data is corrupted during transmission or processing |
 | **Failure Mechanism** | Memory bit-flip (SEU); DMA error; buffer overrun in driver; EMI-induced data corruption on I2S bus |
-| **Effect on Alpamayo** | Corrupted audio may cause false siren detections (false positive) or mask real sirens (false negative) |
+| **Effect on NDAS DRIVE AV** | Corrupted audio may cause false siren detections (false positive) or mask real sirens (false negative) |
 | **Detection Mechanism** | CRC-32 integrity check (TSR-AIQL-003), range validation (TSR-AIQL-005); graceful degradation (TSR-AIQL-007) |
 | **Safety Impact** | False positive: unwarranted yielding (nuisance). False negative: violates SG-03 |
 | **Frequency Estimate** | Medium (SEU rate ~200 FIT; EMI susceptibility dependent on shielding) |
@@ -387,7 +391,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | Audio frames are received but contain outdated data (repeated or delayed frames) |
 | **Failure Mechanism** | Driver buffer stall; scheduling priority inversion; DMA descriptor not updated; timestamp rollover |
-| **Effect on Alpamayo** | Stale audio data may show siren present when it has passed, or not-present when it has arrived |
+| **Effect on NDAS DRIVE AV** | Stale audio data may show siren present when it has passed, or not-present when it has arrived |
 | **Detection Mechanism** | Freshness check (TSR-AIQL-001), alive counter validation (TSR-AIQL-002), sequence counter monotonicity (TSR-AIQL-004); graceful degradation (TSR-AIQL-007) |
 | **Safety Impact** | Delayed yielding response — violation of SG-03 FTTI |
 | **Frequency Estimate** | Medium (scheduling issues ~100 FIT; increases under system load) |
@@ -398,7 +402,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | Audio signal values exceed physical plausibility bounds |
 | **Failure Mechanism** | Microphone bias failure; codec gain register corruption; ADC saturation; reference voltage drift |
-| **Effect on Alpamayo** | Clipped or offset audio distorts frequency content, leading to classifier errors |
+| **Effect on NDAS DRIVE AV** | Clipped or offset audio distorts frequency content, leading to classifier errors |
 | **Detection Mechanism** | Range validation (TSR-AIQL-005) — sample amplitude, DC offset, noise floor checks; BIST spectral match detects analog path degradation (TSR-AIQL-016) |
 | **Safety Impact** | Classifier output unreliable — potential SG-03 violation |
 | **Frequency Estimate** | Low (analog fault rate ~50 FIT; codec register corruption ~20 FIT) |
@@ -409,8 +413,8 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | Real siren present but classifier reports no siren |
 | **Failure Mechanism** | QM classifier systematic error; ambient noise masking; Doppler shift moving siren out of classifier frequency band; microphone sensitivity degradation |
-| **Effect on Alpamayo** | Reduced supplementary input for emergency vehicle detection — Alpamayo continues to detect via primary sensors (camera, LiDAR, radar) |
-| **Detection Mechanism** | **Not addressed by AIQL** — this is a classifier performance limitation, not a data integrity failure. As audio is a secondary sensor, FM-05 is mitigated at the system level by Alpamayo's multi-sensor fusion with primary sensors. The AIQL qualifies data integrity but does not validate classifier semantic correctness. |
+| **Effect on NDAS DRIVE AV** | Reduced supplementary input for emergency vehicle detection — NDAS DRIVE AV continues to detect via primary sensors (camera, LiDAR, radar) |
+| **Detection Mechanism** | **Not addressed by AIQL** — this is a classifier performance limitation, not a data integrity failure. As audio is a secondary sensor, FM-05 is mitigated at the system level by NDAS DRIVE AV multi-sensor fusion with primary sensors. The AIQL qualifies data integrity but does not validate classifier semantic correctness. |
 | **Safety Impact** | Low at AIQL level — primary sensors provide independent emergency vehicle detection. Residual risk: reduced detection confidence in scenarios where audio would have provided early warning (e.g., emergency vehicle approaching from behind a visual obstruction). |
 | **Frequency Estimate** | Medium-High (systematic failure; not quantifiable by FIT rate alone) |
 
@@ -420,9 +424,9 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | No siren present but classifier reports siren detected |
 | **Failure Mechanism** | QM classifier systematic error; environmental sounds resembling sirens (construction equipment, musical instruments, other vehicle horns); acoustic reflections causing phantom source |
-| **Effect on Alpamayo** | Alpamayo receives false siren indication — effect is limited because audio is a secondary sensor and Alpamayo's fusion weighs primary sensor inputs (camera, LiDAR, radar) for driving decisions |
-| **Detection Mechanism** | **Not addressed by AIQL** — this is a classifier performance limitation, not a data integrity failure. As audio is a secondary sensor, FM-06 is mitigated at the system level by Alpamayo's multi-sensor fusion. Primary sensors provide independent confirmation; a false audio-only siren detection without corroborating primary sensor data will be downweighted by fusion. |
-| **Safety Impact** | Low — unwarranted yielding requires corroboration from primary sensors in Alpamayo's fusion architecture. Audio-only siren detection without primary sensor confirmation does not trigger yielding. |
+| **Effect on NDAS DRIVE AV** | NDAS DRIVE AV receives false siren indication — effect is limited because audio is a secondary sensor and NDAS DRIVE AV's fusion weighs primary sensor inputs (camera, LiDAR, radar) for driving decisions |
+| **Detection Mechanism** | **Not addressed by AIQL** — this is a classifier performance limitation, not a data integrity failure. As audio is a secondary sensor, FM-06 is mitigated at the system level by NDAS DRIVE AV multi-sensor fusion. Primary sensors provide independent confirmation; a false audio-only siren detection without corroborating primary sensor data will be downweighted by fusion. |
+| **Safety Impact** | Low — unwarranted yielding requires corroboration from primary sensors in NDAS DRIVE AV's fusion architecture. Audio-only siren detection without primary sensor confirmation does not trigger yielding. |
 | **Frequency Estimate** | Medium (systematic failure; dependent on acoustic environment) |
 
 #### FM-07: Sequence Disorder
@@ -431,7 +435,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | Audio frames arrive out of sequence or with duplicated sequence numbers |
 | **Failure Mechanism** | Multi-threaded driver race condition; DMA descriptor ring corruption; buffer management defect; interrupt priority inversion |
-| **Effect on Alpamayo** | Out-of-order frames disrupt temporal tracking of siren presence/absence transitions |
+| **Effect on NDAS DRIVE AV** | Out-of-order frames disrupt temporal tracking of siren presence/absence transitions |
 | **Detection Mechanism** | Sequence counter monotonicity check (TSR-AIQL-004) |
 | **Safety Impact** | Delayed or incorrect siren detection state — potential SG-03 violation |
 | **Frequency Estimate** | Low (software defect; ~10 FIT under normal scheduling) |
@@ -442,7 +446,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | Multiple audio channels or both audio and AIQL fail simultaneously |
 | **Failure Mechanism** | Shared power rail failure; shared clock source failure; SoC-wide thermal shutdown; common mode EMI affecting all audio channels; shared memory controller failure |
-| **Effect on Alpamayo** | Complete loss of qualified audio with potential AIQL integrity compromise |
+| **Effect on NDAS DRIVE AV** | Complete loss of qualified audio with potential AIQL integrity compromise |
 | **Detection Mechanism** | Graceful degradation (TSR-AIQL-007), spatial FFI MPU (TSR-AIQL-012), temporal FFI watchdog (TSR-AIQL-013); diagnostic logging (TSR-AIQL-011) |
 | **Safety Impact** | **Critical** — defeats both the QM element and the safety mechanism simultaneously |
 | **Frequency Estimate** | Very Low (common cause beta factor ~2% of single-point failure rate) |
@@ -453,7 +457,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | In-cabin speaker cannot produce BIST test signal |
 | **Failure Mechanism** | Speaker driver IC failure; speaker coil open/short; codec DAC failure; wiring harness disconnection; amplifier fault |
-| **Effect on Alpamayo** | BIST cannot execute — audio path integrity cannot be verified; loss of BIST coverage for FM-01 and FM-04 |
+| **Effect on NDAS DRIVE AV** | BIST cannot execute — audio path integrity cannot be verified; loss of BIST coverage for FM-01 and FM-04 |
 | **Detection Mechanism** | BIST output monitoring (TSR-AIQL-015) — expected signal not detected at microphone within timeout; FF_BIST_SPEAKER flag set |
 | **Safety Impact** | Loss of BIST diagnostic coverage — degrades confidence in audio path integrity. Triggers MRM after retry exhaustion (TSR-AIQL-019). |
 | **Frequency Estimate** | Low (speaker failure rate ~100 FIT; amplifier failure ~50 FIT) |
@@ -464,7 +468,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | BIST spectral match fails due to degraded acoustic coupling between in-cabin speakers and microphones |
 | **Failure Mechanism** | Physical obstruction (object placed over microphone); microphone membrane contamination; speaker baffle deformation; cabin seal change affecting acoustic path; microphone sensitivity drift |
-| **Effect on Alpamayo** | BIST indicates audio path degradation — correlation below threshold suggests microphone or acoustic path has changed, potentially affecting siren detection quality |
+| **Effect on NDAS DRIVE AV** | BIST indicates audio path degradation — correlation below threshold suggests microphone or acoustic path has changed, potentially affecting siren detection quality |
 | **Detection Mechanism** | BIST spectral match correlation check (TSR-AIQL-016) — correlation < 0.85 or amplitude deviation > +/- 6 dB; FF_BIST_COUPLING flag set |
 | **Safety Impact** | Indicates potential degradation of siren detection capability. Triggers MRM after retry exhaustion (TSR-AIQL-019). |
 | **Frequency Estimate** | Medium (environmental contamination ~200 FIT; sensitivity drift ~50 FIT over lifetime) |
@@ -475,14 +479,14 @@ The following failure modes are identified for the QM audio input path. Each fai
 |-----------|-------------|
 | **Failure Mode** | BIST spectral match fails despite healthy audio path due to cabin noise interference |
 | **Failure Mechanism** | Loud music playback during BIST window; passenger conversation masking BIST signal; HVAC blower noise at BIST frequencies; road noise during periodic BIST |
-| **Effect on Alpamayo** | False BIST failure triggers unnecessary MRM — availability impact (vehicle stops when audio path is actually functional) |
+| **Effect on NDAS DRIVE AV** | False BIST failure triggers unnecessary MRM — availability impact (vehicle stops when audio path is actually functional) |
 | **Detection Mechanism** | Retry mechanism (TSR-AIQL-017, TSR-AIQL-019) — 3 retries at startup, 2 retries during periodic BIST; signal-to-interference analysis during spectral match |
 | **Safety Impact** | Availability impact only — false MRM is a nuisance but not a safety hazard. Retry mechanism reduces false failure probability. |
 | **Frequency Estimate** | Medium (dependent on cabin noise environment; mitigated by BIST signal level at -20 dBFS and retry logic) |
 
 ### 6.2 Freedom From Interference (FFI) Analysis
 
-FFI analysis ensures that failures in the QM audio subsystem cannot propagate into and corrupt the ASIL B AIQL or the ASIL-rated Alpamayo system. Three FFI dimensions are analyzed per ISO 26262-9.
+FFI analysis ensures that failures in the QM audio subsystem cannot propagate into and corrupt the ASIL B AIQL or the ASIL-rated NDAS DRIVE AV system. Three FFI dimensions are analyzed per ISO 26262-9.
 
 #### 6.2.1 Spatial FFI (Freedom from Interference in Memory/Data)
 
@@ -578,9 +582,9 @@ FFI analysis ensures that failures in the QM audio subsystem cannot propagate in
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-007 |
-| **Requirement** | When the AIQL qualification state transitions to NOT_QUALIFIED, the AIQL shall: (a) Output qualification_status = NOT_QUALIFIED to Alpamayo; (b) Clear the audio_data and classifier_output fields (zero-fill); (c) Continue outputting frames at 20 Hz to maintain alive signaling; (d) Set all applicable failure_flags bits. Alpamayo shall exclude audio from sensor fusion and continue emergency vehicle detection using primary sensors (camera, LiDAR, radar) upon receiving NOT_QUALIFIED status. When NOT_QUALIFIED is caused by confirmed BIST failure (FF_BIST_FAIL, FF_BIST_SPEAKER, or FF_BIST_COUPLING set after retry exhaustion), the AIQL shall additionally request MRM transition per TSR-AIQL-019. |
+| **Requirement** | When the AIQL qualification state transitions to NOT_QUALIFIED, the AIQL shall: (a) Output qualification_status = NOT_QUALIFIED to NDAS DRIVE AV; (b) Clear the audio_data and classifier_output fields (zero-fill); (c) Continue outputting frames at 20 Hz to maintain alive signaling; (d) Set all applicable failure_flags bits. NDAS DRIVE AV shall exclude audio from sensor fusion and continue emergency vehicle detection using primary sensors (camera, LiDAR, radar) upon receiving NOT_QUALIFIED status. When NOT_QUALIFIED is caused by confirmed BIST failure (FF_BIST_FAIL, FF_BIST_SPEAKER, or FF_BIST_COUPLING set after retry exhaustion), the AIQL shall additionally request MRM transition per TSR-AIQL-019. |
 | **ASIL** | B |
-| **Rationale** | Graceful degradation ensures that audio failures result in a deterministic exclusion of audio from Alpamayo's sensor fusion rather than uncontrolled behavior. Zero-filling audio data prevents Alpamayo from using corrupted or stale data. Continued 20 Hz output ensures Alpamayo can distinguish "audio not qualified" from "AIQL has crashed." As audio is a secondary sensor, the transition to primary-sensor-only operation is a minimal degradation. |
+| **Rationale** | Graceful degradation ensures that audio failures result in a deterministic exclusion of audio from NDAS DRIVE AV sensor fusion rather than uncontrolled behavior. Zero-filling audio data prevents NDAS DRIVE AV from using corrupted or stale data. Continued 20 Hz output ensures NDAS DRIVE AV can distinguish "audio not qualified" from "AIQL has crashed." As audio is a secondary sensor, the transition to primary-sensor-only operation is a minimal degradation. |
 | **Failure Mode Addressed** | FM-01 (Loss), FM-02 (Corruption), FM-03 (Staleness), FM-08 (Common Cause), FM-09 (Speaker Failure), FM-10 (Coupling Degradation) |
 | **Verification** | FI-07 |
 | **Acceptance Criterion** | NOT_QUALIFIED status transmitted within 100 ms of state transition; zero non-zero audio data bytes in NOT_QUALIFIED frames. |
@@ -686,9 +690,9 @@ FFI analysis ensures that failures in the QM audio subsystem cannot propagate in
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-017 |
-| **Requirement** | The AIQL shall execute a full startup BIST (2000 ms sine sweep) before transitioning from NOT_QUALIFIED to QUALIFIED state on system initialization. The startup BIST must pass before any audio data is qualified for Alpamayo. If the startup BIST fails, the AIQL shall retry up to 3 times. If all 3 retries fail, the AIQL shall remain in NOT_QUALIFIED state and request MRM transition per TSR-AIQL-019. |
+| **Requirement** | The AIQL shall execute a full startup BIST (2000 ms sine sweep) before transitioning from NOT_QUALIFIED to QUALIFIED state on system initialization. The startup BIST must pass before any audio data is qualified for NDAS DRIVE AV. If the startup BIST fails, the AIQL shall retry up to 3 times. If all 3 retries fail, the AIQL shall remain in NOT_QUALIFIED state and request MRM transition per TSR-AIQL-019. |
 | **ASIL** | B |
-| **Rationale** | Startup BIST ensures the audio path is verified before any audio data influences Alpamayo's sensor fusion. The 2000 ms sweep duration provides comprehensive frequency coverage. Three retries accommodate transient interference during vehicle startup (e.g., door closing, engine start noise). Total startup BIST budget: ~8.2 seconds worst case (4 attempts x 2050 ms). |
+| **Rationale** | Startup BIST ensures the audio path is verified before any audio data influences NDAS DRIVE AV sensor fusion. The 2000 ms sweep duration provides comprehensive frequency coverage. Three retries accommodate transient interference during vehicle startup (e.g., door closing, engine start noise). Total startup BIST budget: ~8.2 seconds worst case (4 attempts x 2050 ms). |
 | **Failure Mode Addressed** | FM-09 (Speaker Failure), FM-10 (Coupling Degradation) |
 | **Verification** | FI-12, unit test |
 | **Acceptance Criterion** | No transition to QUALIFIED without BIST pass; all 3 retries executed on persistent failure; MRM requested after retry exhaustion. |
@@ -698,9 +702,9 @@ FFI analysis ensures that failures in the QM audio subsystem cannot propagate in
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-018 |
-| **Requirement** | The AIQL shall execute a periodic BIST (200 ms abbreviated sweep burst) every 60 seconds during QUALIFIED operation. During the periodic BIST window, the AIQL shall: (a) Subtract the known BIST signal from the audio data before forwarding to Alpamayo (signal cancellation); (b) Perform spectral match verification per TSR-AIQL-016 on the microphone capture. Signal cancellation shall achieve >= 30 dB attenuation of the BIST signal in the forwarded audio stream. |
+| **Requirement** | The AIQL shall execute a periodic BIST (200 ms abbreviated sweep burst) every 60 seconds during QUALIFIED operation. During the periodic BIST window, the AIQL shall: (a) Subtract the known BIST signal from the audio data before forwarding to NDAS DRIVE AV (signal cancellation); (b) Perform spectral match verification per TSR-AIQL-016 on the microphone capture. Signal cancellation shall achieve >= 30 dB attenuation of the BIST signal in the forwarded audio stream. |
 | **ASIL** | B |
-| **Rationale** | Periodic BIST detects audio path degradation that develops during driving (e.g., microphone contamination, connector vibration loosening, thermal drift). The 60-second interval balances diagnostic coverage against cabin audio intrusion. The 200 ms burst is shorter than the startup sweep but covers the critical siren frequency range. Signal cancellation prevents the BIST signal from reaching Alpamayo and causing false siren detections. The 30 dB cancellation target reduces the BIST signal below the classifier noise floor. |
+| **Rationale** | Periodic BIST detects audio path degradation that develops during driving (e.g., microphone contamination, connector vibration loosening, thermal drift). The 60-second interval balances diagnostic coverage against cabin audio intrusion. The 200 ms burst is shorter than the startup sweep but covers the critical siren frequency range. Signal cancellation prevents the BIST signal from reaching NDAS DRIVE AV and causing false siren detections. The 30 dB cancellation target reduces the BIST signal below the classifier noise floor. |
 | **Failure Mode Addressed** | FM-10 (Coupling Degradation), FM-11 (BIST False Failure) |
 | **Verification** | FI-13, unit test |
 | **Acceptance Criterion** | BIST executes within +/- 5 seconds of scheduled interval; signal cancellation >= 30 dB measured at AIQL output; no false siren detections by classifier during BIST window. |
@@ -763,7 +767,7 @@ Safety Goal SG-03: ASIL B
 
 This decomposition is valid under ISO 26262-9 Clause 5 because:
 
-1. **The ASIL B element (AIQL) implements all safety mechanisms necessary to detect and mitigate data integrity failures in the QM elements** — as enumerated in Section 7 (TSR-AIQL-001 through TSR-AIQL-005, TSR-AIQL-007 through TSR-AIQL-019). Classifier correctness (FM-05, FM-06) is addressed at the system level by Alpamayo's multi-sensor fusion with primary sensors, not by the AIQL.
+1. **The ASIL B element (AIQL) implements all safety mechanisms necessary to detect and mitigate data integrity failures in the QM elements** — as enumerated in Section 7 (TSR-AIQL-001 through TSR-AIQL-005, TSR-AIQL-007 through TSR-AIQL-019). Classifier correctness (FM-05, FM-06) is addressed at the system level by NDAS DRIVE AV multi-sensor fusion with primary sensors, not by the AIQL.
 
 2. **The QM elements are not required to perform any safety function** — they provide audio data with Assumptions of Use (Section 9) but their failure is handled by the AIQL
 
@@ -1006,8 +1010,8 @@ The AIQL maintains a qualification state machine that governs the safety status 
 | Attribute | Value |
 |-----------|-------|
 | **Entry Condition** | All checks passing; sufficient consecutive valid frames received (10 from DEGRADED, 20 from NOT_QUALIFIED); startup BIST passed |
-| **Behavior** | Audio data and classifier output passed through to Alpamayo with qualification_status = QUALIFIED |
-| **Alpamayo Action** | Multi-sensor fusion with audio as supplementary input for emergency vehicle detection (nominal mode) |
+| **Behavior** | Audio data and classifier output passed through to NDAS DRIVE AV with qualification_status = QUALIFIED |
+| **NDAS DRIVE AV Action** | Multi-sensor fusion with audio as supplementary input for emergency vehicle detection (nominal mode) |
 | **Output** | Full audio frame + classifier output + qualification_status = QUALIFIED |
 
 #### DEGRADED (Monitoring)
@@ -1015,8 +1019,8 @@ The AIQL maintains a qualification state machine that governs the safety status 
 | Attribute | Value |
 |-----------|-------|
 | **Entry Condition** | Any single qualification check failure while in QUALIFIED state |
-| **Behavior** | Audio data still passed through to Alpamayo with qualification_status = DEGRADED; failure_flags indicate which checks failed; AIQL monitors for recovery or further degradation |
-| **Alpamayo Action** | Reduced confidence in audio channel; increase weight on primary sensors (camera, LiDAR, radar) for emergency vehicle detection |
+| **Behavior** | Audio data still passed through to NDAS DRIVE AV with qualification_status = DEGRADED; failure_flags indicate which checks failed; AIQL monitors for recovery or further degradation |
+| **NDAS DRIVE AV Action** | Reduced confidence in audio channel; increase weight on primary sensors (camera, LiDAR, radar) for emergency vehicle detection |
 | **Output** | Full audio frame + classifier output + failure_flags + qualification_status = DEGRADED |
 | **Escalation** | Transition to NOT_QUALIFIED after 3 consecutive frame failures OR frame reception timeout > 150 ms |
 
@@ -1026,7 +1030,7 @@ The AIQL maintains a qualification state machine that governs the safety status 
 |-----------|-------|
 | **Entry Condition** | 3 consecutive frame failures in DEGRADED state; frame reception timeout > 150 ms; watchdog trigger; MPU violation detected |
 | **Behavior** | Audio data and classifier output zeroed out; qualification_status = NOT_QUALIFIED; continue 20 Hz output for liveness signaling |
-| **Alpamayo Action** | Primary-sensor-only emergency vehicle detection; audio excluded from fusion. Primary sensors (camera, LiDAR, radar) continue normal operation. |
+| **NDAS DRIVE AV Action** | Primary-sensor-only emergency vehicle detection; audio excluded from fusion. Primary sensors (camera, LiDAR, radar) continue normal operation. |
 | **Output** | Zero-filled audio + zero-filled classifier + all failure_flags set + qualification_status = NOT_QUALIFIED |
 | **Recovery** | Transition to DEGRADED after 20 consecutive valid frames (1000 ms) — only for passive fault recovery. If NOT_QUALIFIED was caused by confirmed BIST failure, recovery is not possible — state transitions to MRM_REQUESTED. |
 
@@ -1036,7 +1040,7 @@ The AIQL maintains a qualification state machine that governs the safety status 
 |-----------|-------|
 | **Entry Condition** | Confirmed BIST failure: startup BIST fails 3 consecutive times (TSR-AIQL-017); periodic BIST fails 2 consecutive times (TSR-AIQL-019) |
 | **Behavior** | AIQL outputs NOT_QUALIFIED status with BIST failure flags; MRM request transmitted to vehicle safety manager; diagnostic log captures BIST failure details |
-| **Alpamayo Action** | Audio excluded from fusion; vehicle safety manager initiates controlled stop (Minimal Risk Maneuver) |
+| **NDAS DRIVE AV Action** | Audio excluded from fusion; vehicle safety manager initiates controlled stop (Minimal Risk Maneuver) |
 | **Output** | Zero-filled audio + zero-filled classifier + BIST failure flags + qualification_status = NOT_QUALIFIED + MRM request signal |
 | **Recovery** | **None** — MRM_REQUESTED is a terminal state. Recovery requires full system restart and successful startup BIST. This reflects the persistent nature of the underlying hardware or acoustic path failure. |
 
@@ -1078,7 +1082,7 @@ The 500 ms FTTI is allocated across the degradation sequence:
 | Fault detection | <= 100 ms | 100 ms | AIQL detects fault (2 frame periods) |
 | State transition to DEGRADED | <= 50 ms | 150 ms | AIQL sets DEGRADED status |
 | State transition to NOT_QUALIFIED | <= 50 ms | 200 ms | If fault persists, AIQL sets NOT_QUALIFIED |
-| Alpamayo fusion update | <= 100 ms | 300 ms | Alpamayo excludes audio from fusion, continues with primary sensors |
+| NDAS DRIVE AV fusion update | <= 100 ms | 300 ms | NDAS DRIVE AV excludes audio from fusion, continues with primary sensors |
 | Vehicle response | <= 200 ms | 500 ms | Vehicle continues normal operation with primary sensors |
 
 **Note**: The FTTI budget is conservative. In practice, the AIQL will detect most faults within a single frame period (50 ms), providing additional margin.
@@ -1094,7 +1098,7 @@ The 500 ms FTTI is allocated across the degradation sequence:
 | **Unit Test** | Host PC (x86/ARM cross-compile) | Individual AIQL check functions (freshness, CRC, range, etc.) | ISO 26262-6, Table 9 |
 | **SiL Test** | Software-in-the-Loop simulator | AIQL state machine with simulated audio driver input | ISO 26262-6, Table 10 |
 | **HiL Test** | Hardware-in-the-Loop with target SoC | AIQL on target platform with real audio hardware and injected faults | ISO 26262-4, Table 8 |
-| **System Test** | Full vehicle or vehicle-representative bench | End-to-end audio path including microphones, codec, driver, AIQL, and Alpamayo interface | ISO 26262-4, Table 9 |
+| **System Test** | Full vehicle or vehicle-representative bench | End-to-end audio path including microphones, codec, driver, AIQL, and NDAS DRIVE AV interface | ISO 26262-4, Table 9 |
 
 ### 11.2 Unit Test Requirements
 
@@ -1257,7 +1261,7 @@ The following fault injection tests verify that the AIQL correctly detects and h
 | **Objective** | Verify periodic BIST execution and signal cancellation during QUALIFIED operation |
 | **Failure Modes** | FM-10 (Coupling Degradation), FM-11 (BIST False Failure) |
 | **TSRs Verified** | TSR-AIQL-018 (Periodic BIST Scheduling) |
-| **Injection Method** | (a) Inject cabin noise at various levels during periodic BIST; (b) Degrade acoustic coupling mid-drive; (c) Verify signal cancellation by monitoring Alpamayo input during BIST; (d) Verify BIST interval timing under various system loads |
+| **Injection Method** | (a) Inject cabin noise at various levels during periodic BIST; (b) Degrade acoustic coupling mid-drive; (c) Verify signal cancellation by monitoring NDAS DRIVE AV input during BIST; (d) Verify BIST interval timing under various system loads |
 | **Pass Criteria** | Periodic BIST executes within +/- 5 seconds of 60-second interval; signal cancellation >= 30 dB; no false siren detections during BIST window; correct failure detection when coupling degrades |
 | **Test Count** | 12 test cases (4 injection types x 3 operating conditions) |
 
@@ -1292,7 +1296,7 @@ The following fault injection tests verify that the AIQL correctly detects and h
 | FI-14 | FM-09, FM-10 | TSR-AIQL-019 | 10 | HiL |
 | **Total** | | | **149** | |
 
-**Note**: FM-05 (False Negative) and FM-06 (False Positive) are classifier performance limitations addressed at the system level by Alpamayo's multi-sensor fusion with primary sensors. They are not covered by the AIQL fault injection campaign.
+**Note**: FM-05 (False Negative) and FM-06 (False Positive) are classifier performance limitations addressed at the system level by NDAS DRIVE AV multi-sensor fusion with primary sensors. They are not covered by the AIQL fault injection campaign.
 
 ### 11.5 ASIL B Process Compliance Work Products
 
@@ -1336,9 +1340,9 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | **Functional Insufficiency** | QM siren classifier cannot reliably distinguish all siren-like sounds from actual emergency vehicle sirens |
 | **Hazardous Behavior** | False positive siren detection leading to unwarranted yielding maneuver — availability impact |
 | **Scenario** | Vehicle passing construction site with reversing alarm (1000 Hz pulsing tone); classifier reports siren probability 0.75; no emergency vehicle present |
-| **Risk Reduction** | **System-level mitigation**: Alpamayo's multi-sensor fusion weighs audio as a secondary input. A false siren detection from audio alone, without corroborating primary sensor evidence (flashing lights on camera, emergency vehicle shape on LiDAR), will be downweighted by fusion and will not trigger a yielding maneuver. |
+| **Risk Reduction** | **System-level mitigation**: NDAS DRIVE AV multi-sensor fusion weighs audio as a secondary input. A false siren detection from audio alone, without corroborating primary sensor evidence (flashing lights on camera, emergency vehicle shape on LiDAR), will be downweighted by fusion and will not trigger a yielding maneuver. |
 | **AIQL Response** | AIQL remains in QUALIFIED state — the audio I/O path is functioning correctly. The classifier output passes all range checks (probability within [0.0, 1.0]). False positive detection is a classifier performance issue addressed at the system level. |
-| **Residual Risk** | Low — audio is a secondary sensor. False audio-only siren detections do not independently trigger yielding; primary sensor corroboration is required by Alpamayo's fusion architecture. |
+| **Residual Risk** | Low — audio is a secondary sensor. False audio-only siren detections do not independently trigger yielding; primary sensor corroboration is required by NDAS DRIVE AV's fusion architecture. |
 
 ### TC-AUDIO-03: Doppler Shift
 
@@ -1386,7 +1390,7 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | TC-AUDIO-04 | In-cabin mic attenuation | Primary sensors + in-cabin mic specs | AoU-009, BIST (path verification only) | Medium |
 | TC-AUDIO-05 | BIST cabin noise interference | Retry mechanism + signal level design | TSR-AIQL-019 (retries), TSR-AIQL-018 (cancellation) | Low (safety) / Medium (availability) |
 
-**Key insight**: Because audio is a secondary sensor, SOTIF triggering conditions TC-AUDIO-01 through TC-AUDIO-03 have **low residual risk** — primary sensors (camera, LiDAR, radar) maintain full emergency vehicle detection capability regardless of audio performance limitations. TC-AUDIO-04 is elevated to **medium residual risk** because in-cabin microphone placement inherently attenuates external siren audio by 20-30 dB, significantly reducing the effective detection range; this trade-off is accepted because in-cabin placement enables BIST-based audio path verification and eliminates exterior mounting challenges. TC-AUDIO-05 represents an availability concern (false BIST failures) rather than a safety concern, with medium availability risk managed by retry logic and BIST signal design. The AIQL's scope remains limited to data integrity qualification and BIST-based path verification at the I/O boundary; classifier performance limitations are addressed at the system level by Alpamayo's multi-sensor fusion architecture.
+**Key insight**: Because audio is a secondary sensor, SOTIF triggering conditions TC-AUDIO-01 through TC-AUDIO-03 have **low residual risk** — primary sensors (camera, LiDAR, radar) maintain full emergency vehicle detection capability regardless of audio performance limitations. TC-AUDIO-04 is elevated to **medium residual risk** because in-cabin microphone placement inherently attenuates external siren audio by 20-30 dB, significantly reducing the effective detection range; this trade-off is accepted because in-cabin placement enables BIST-based audio path verification and eliminates exterior mounting challenges. TC-AUDIO-05 represents an availability concern (false BIST failures) rather than a safety concern, with medium availability risk managed by retry logic and BIST signal design. The AIQL's scope remains limited to data integrity qualification and BIST-based path verification at the I/O boundary; classifier performance limitations are addressed at the system level by NDAS DRIVE AV multi-sensor fusion architecture.
 
 ---
 
@@ -1400,8 +1404,8 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | SG-03 | FM-02: Corruption | TSR-AIQL-003, TSR-AIQL-005, TSR-AIQL-007 | FI-03 |
 | SG-03 | FM-03: Staleness | TSR-AIQL-001, TSR-AIQL-002, TSR-AIQL-004, TSR-AIQL-007 | FI-01, FI-02 |
 | SG-03 | FM-04: Out-of-Range | TSR-AIQL-005, TSR-AIQL-016 | FI-05 |
-| SG-03 | FM-05: False Negative | — (system-level: Alpamayo multi-sensor fusion) | — (system-level verification) |
-| SG-03 | FM-06: False Positive | — (system-level: Alpamayo multi-sensor fusion) | — (system-level verification) |
+| SG-03 | FM-05: False Negative | — (system-level: NDAS DRIVE AV multi-sensor fusion) | — (system-level verification) |
+| SG-03 | FM-06: False Positive | — (system-level: NDAS DRIVE AV multi-sensor fusion) | — (system-level verification) |
 | SG-03 | FM-07: Sequence Disorder | TSR-AIQL-004 | FI-04 |
 | SG-03 | FM-08: Common Cause | TSR-AIQL-012, TSR-AIQL-013, TSR-AIQL-007 | FI-07 |
 | SG-03 | FM-09: Speaker Failure | TSR-AIQL-015, TSR-AIQL-019, TSR-AIQL-007 | FI-10 |
@@ -1440,15 +1444,15 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | FM-02 | 3 | TSR-AIQL-003, -005, -007 |
 | FM-03 | 4 | TSR-AIQL-001, -002, -004, -007 |
 | FM-04 | 2 | TSR-AIQL-005, -016 |
-| FM-05 | 0* | — (system-level: Alpamayo multi-sensor fusion) |
-| FM-06 | 0* | — (system-level: Alpamayo multi-sensor fusion) |
+| FM-05 | 0* | — (system-level: NDAS DRIVE AV multi-sensor fusion) |
+| FM-06 | 0* | — (system-level: NDAS DRIVE AV multi-sensor fusion) |
 | FM-07 | 1 | TSR-AIQL-004 |
 | FM-08 | 3 | TSR-AIQL-007, -012, -013 |
 | FM-09 | 3 | TSR-AIQL-007, -015, -019 |
 | FM-10 | 3 | TSR-AIQL-007, -016, -019 |
 | FM-11 | 2 | TSR-AIQL-018, -019 |
 
-*FM-05 and FM-06 are classifier performance limitations (not data integrity failures). As audio is a secondary sensor, these are addressed at the system level by Alpamayo's multi-sensor fusion with primary sensors (camera, LiDAR, radar) — not by the AIQL.
+*FM-05 and FM-06 are classifier performance limitations (not data integrity failures). As audio is a secondary sensor, these are addressed at the system level by NDAS DRIVE AV multi-sensor fusion with primary sensors (camera, LiDAR, radar) — not by the AIQL.
 
 **Coverage check**: All 9 data integrity and BIST failure modes (FM-01 through FM-04, FM-07 through FM-11) have at least 1 AIQL TSR. FM-05 and FM-06 (classifier performance) are addressed at system level. **PASS**
 
@@ -1504,11 +1508,11 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 |---|-----------|-------|----------|-------------|--------|
 | OI-01 | **Audio frame interface specification**: Finalize the exact audio frame format, field ordering, and byte alignment with the audio driver development team. Current Section 4.2 is a draft proposal. | Audio SW Lead + Safety Engineering | High | TBD | Open |
 | OI-02 | **HARA update for SG-03**: HARA-0003 row added (S2/E3/C2 → ASIL B). Requires formal HARA review board approval to baseline the new safety goal. | Safety Manager | High | TBD | Open |
-| OI-03 | **Target compute platform**: Confirm which NVIDIA SoC (Orin, Thor, or next-gen) will host the AIQL. WCET (TSR-AIQL-009) and MPU configuration (TSR-AIQL-012) are platform-dependent. | Platform Architecture | High | TBD | Open |
+| OI-03 | **Target compute platform**: Confirm DRIVE AGX Thor (Blackwell) as the target platform for AIQL deployment within Hyperion 10 reference architecture. WCET (TSR-AIQL-009) and MPU/MIG configuration (TSR-AIQL-012) are platform-dependent. Confirm MIG partition allocation for AIQL safety-critical workload. | Platform Architecture | High | TBD | Open |
 | OI-04 | **Microphone array specifications**: ~~Confirm microphone placement (exterior vs. cabin)~~ Microphone placement confirmed as **in-cabin** (v0.4). Remaining: finalize count, model selection, and acoustic specifications for in-cabin placement. AoU-009 updated for in-cabin requirements including BIST coupling. Cabin acoustic characterization needed (see OI-09). | Audio HW Lead | Medium | TBD | Partially Resolved |
 | OI-05 | **Siren classifier output format**: Confirm the classifier output structure (Section 4.2.3) with the audio ML team. The direction-of-arrival field and confidence metric format need alignment. | Audio ML Team | Medium | TBD | Open |
-| OI-06 | **FTTI confirmation**: Validate the 500 ms FTTI through system-level timing analysis including worst-case audio processing latency, Alpamayo inference time, and vehicle dynamic response. Current allocation (Section 10.4) is preliminary. | System Safety + Vehicle Dynamics | High | TBD | Open |
-| OI-07 | **System-level verification of FM-05/FM-06**: Verify that Alpamayo's multi-sensor fusion adequately mitigates classifier false negatives (FM-05) and false positives (FM-06) when audio is used as a secondary sensor. This is outside the AIQL scope but must be confirmed at the system level. | System Safety + Perception Team | High | TBD | Open |
+| OI-06 | **FTTI confirmation**: Validate the 500 ms FTTI through system-level timing analysis including worst-case audio processing latency, NDAS DRIVE AV inference time, and vehicle dynamic response. Current allocation (Section 10.4) is preliminary. | System Safety + Vehicle Dynamics | High | TBD | Open |
+| OI-07 | **System-level verification of FM-05/FM-06**: Verify that NDAS DRIVE AV multi-sensor fusion adequately mitigates classifier false negatives (FM-05) and false positives (FM-06) when audio is used as a secondary sensor. This is outside the AIQL scope but must be confirmed at the system level. | System Safety + Perception Team | High | TBD | Open |
 | OI-08 | **Speaker specifications for BIST**: Select specific in-cabin speaker(s) for BIST use. Confirm frequency response, SPL output at mic positions, THD, and independent DAC access (AoU-011). Determine if existing entertainment speakers can be shared or if a dedicated BIST speaker is needed. | Audio HW Lead | High | TBD | Open |
 | OI-09 | **Cabin acoustic characterization**: Perform acoustic transfer function measurement from BIST speaker(s) to each in-cabin microphone across 500-3000 Hz. Characterize variation across temperature (-40 C to +85 C), HVAC modes, and cabin configurations (doors/windows open/closed, seats occupied/empty). Required to calibrate BIST spectral match reference (TSR-AIQL-016) and validate AoU-012. | Audio HW Lead + Safety Engineering | High | TBD | Open |
 | OI-10 | **BIST signal cancellation validation**: Validate that the BIST signal cancellation algorithm (TSR-AIQL-018) achieves >= 30 dB attenuation in representative cabin conditions. Determine if adaptive cancellation is needed or if a fixed reference subtraction is sufficient. | Safety Engineering + Audio SW Lead | Medium | TBD | Open |
@@ -1526,7 +1530,10 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | Term | Definition |
 |------|-----------|
 | **AIQL** | Audio Input Qualification Layer — the ASIL B safety mechanism defined in this TSC |
-| **Alpamayo** | NVIDIA's end-to-end autonomous vehicle foundation model |
+| **Alpamayo** | NVIDIA's foundation-model AV research layer — a 10B-parameter Vision Language Action (VLA) model that trains in the cloud (DGX) and produces distilled compact models deployed into the NDAS DRIVE AV on-vehicle stack. Alpamayo sits above NDAS/DRIVE AV; it is not an NDAS component and not part of the DRIVE Thor base platform. |
+| **DRIVE AGX Thor** | NVIDIA's centralized AV compute platform based on the Blackwell architecture (2x Thor SoCs, 2000+ FP4 TFLOPS). Hosts DRIVE OS, DriveWorks, and NDAS DRIVE AV. |
+| **DRIVE Hyperion 10** | NVIDIA's production-ready AV reference architecture: DRIVE AGX Thor compute + qualified sensor suite (14 cameras, 9 radars, 1 lidar, 12 ultrasonics, 1 exterior mic array, 4 interior cameras). |
+| **NDAS (DRIVE AV)** | NVIDIA DRIVE AV Solution — the full-stack autonomous driving software (perception, prediction, mapping, planning, control) running on DRIVE AGX Thor. The AIQL's downstream consumer. |
 | **ANC** | Active Noise Cancellation — system that generates anti-phase sound to reduce cabin noise |
 | **AoU** | Assumption of Use — interface contract on the QM audio subsystem per ISO 26262-8 Clause 12 |
 | **ASIL** | Automotive Safety Integrity Level — risk classification per ISO 26262 (QM, A, B, C, D) |
@@ -1770,4 +1777,4 @@ Both checks must pass for BIST to pass. This dual-check approach detects both br
 | Amplitude tolerance | +/- 6 dB | +/- 3 to +/- 12 dB | Tighter = better fault detection; looser = fewer false failures |
 | Startup retries | 3 | 1-5 | More retries = fewer false MRMs; fewer = faster failure detection |
 | Periodic retries | 2 | 1-3 | More retries = fewer false MRMs; fewer = faster failure detection |
-| Signal cancellation target | 30 dB | 20-40 dB | Higher = less BIST leakage to Alpamayo; harder to achieve |
+| Signal cancellation target | 30 dB | 20-40 dB | Higher = less BIST leakage to NDAS DRIVE AV; harder to achieve |
