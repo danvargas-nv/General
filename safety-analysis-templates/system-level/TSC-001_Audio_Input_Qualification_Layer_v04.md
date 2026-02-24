@@ -10,7 +10,7 @@
 | **Safety Goal** | SG-03 |
 | **HARA Reference** | HARA-0003 |
 | **Item** | NDAS DRIVE AV Stack — Audio Input Path (on DRIVE AGX Thor / Hyperion 10) |
-| **Version** | 0.5 |
+| **Version** | 0.6 |
 | **Status** | In Development |
 | **Author** | Safety Engineering |
 | **Created** | 2026-02-22 |
@@ -36,6 +36,7 @@
 | 0.3 | 2026-02-22 | Safety Engineering | Scoped AIQL to audio I/O qualification only; audio designated as secondary safety sensor (primary: camera/lidar/radar); removed TSR-AIQL-006 (cross-modal plausibility) and TSR-AIQL-014 (single-ended plausibility) — classifier correctness addressed at system level by Alpamayo multi-sensor fusion; removed camera interface; simplified safe state |
 | 0.4 | 2026-02-23 | Safety Engineering | Confirmed in-cabin microphone placement; added Speaker-Microphone Loopback BIST (Built-In Self-Test) with MRM transition; added TSR-AIQL-015 through -019; added FM-09/FM-10/FM-11; added AoU-011/AoU-012; added FI-10 through FI-14; added TC-AUDIO-05; added Appendix E (BIST architecture); updated traceability and coverage |
 | 0.5 | 2026-02-23 | Safety Engineering | Corrected platform architecture framing: Alpamayo is a foundation-model research layer above NDAS/DRIVE AV, not the direct runtime consumer. Replaced all "Alpamayo" runtime references with "NDAS DRIVE AV" (the on-vehicle perception pipeline on DRIVE AGX Thor / Hyperion 10). Updated Item field, boundary diagrams, safety goal, failure mode effects, TSRs, state machine, FFI analysis, V&V, SOTIF, traceability, open items, and glossary. Added NDAS, DRIVE AGX Thor, DRIVE Hyperion 10 to glossary. |
+| 0.6 | 2026-02-23 | Safety Engineering | Added SysML architecture views: Block Definition Diagram (4.1.1), Internal Block Diagram (4.1.2), Interface Block Definitions (4.2.6), Block/Part Summary Table (4.4), and Data Flow Sequences for nominal processing, startup BIST, and periodic BIST (4.5). |
 
 ---
 
@@ -193,6 +194,323 @@ The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-
                       +--------------------------------------------------------+
 ```
 
+#### 4.1.1 System Context — Block Definition Diagram (SysML BDD)
+
+The following diagram defines the block hierarchy and associations for the AIQL within the DRIVE AGX Thor platform. Map each box to a SysML `«block»` with the indicated stereotype and ASIL classification.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ «block» DRIVE_AGX_Thor_Platform                                    Hyperion 10  │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐   │
+│  │                           QM Boundary                                     │   │
+│  │                                                                           │   │
+│  │  ┌──────────────┐     ┌──────────────┐     ┌──────────────────────────┐  │   │
+│  │  │ «block»      │     │ «block»      │     │ «block»                  │  │   │
+│  │  │ InCabinMic   │     │ AudioCodec   │     │ AudioDriver              │  │   │
+│  │  │ Array        │     │              │     │                          │  │   │
+│  │  │──────────────│     │──────────────│     │──────────────────────────│  │   │
+│  │  │ «QM HW»     │     │ «QM HW»     │     │ «QM SW»                 │  │   │
+│  │  │ ASIL: QM    │     │ ASIL: QM    │     │ ASIL: QM               │  │   │
+│  │  │──────────────│     │──────────────│     │──────────────────────────│  │   │
+│  │  │ numChannels  │     │ adcMode:     │     │ frameRate: 20 Hz        │  │   │
+│  │  │  : uint8 = 4│     │  I2S/TDM    │     │ sharedMemAddr: ptr      │  │   │
+│  │  │ sampleRate:  │     │ sampleBits:  │     │ dmaChannel: uint8      │  │   │
+│  │  │  48000 Hz   │     │  16         │     │──────────────────────────│  │   │
+│  │  │ freqRange:   │     │ dacMode:     │     │ +packFrame()            │  │   │
+│  │  │  20-20kHz   │     │  PCM        │     │ +writeCRC32()           │  │   │
+│  │  └──────┬───────┘     │──────────────│     │ +incrAliveCounter()    │  │   │
+│  │         │ analog      │ +adcConvert()│     └────────────┬───────────┘  │   │
+│  │         │ audio       │ +dacConvert()│                  │              │   │
+│  │         ▼             └──┬──────┬────┘                  │              │   │
+│  │         ├────────────────┘      ▲                       │              │   │
+│  │         │  I2S/TDM              │ DAC PCM               │              │   │
+│  │         │                       │                       │              │   │
+│  │  ┌──────┴───────┐              │                       │              │   │
+│  │  │ «block»      │              │                       │              │   │
+│  │  │ SirenHorn    │              │                       │              │   │
+│  │  │ Classifier   │              │                       │              │   │
+│  │  │──────────────│              │                       │              │   │
+│  │  │ «QM SW»     │              │                       │              │   │
+│  │  │ ASIL: QM    │              │                       │              │   │
+│  │  │──────────────│              │                       │              │   │
+│  │  │ +classify()  │              │                       │              │   │
+│  │  │  siren_p     │              │                       │              │   │
+│  │  │  horn_p      │              │                       │              │   │
+│  │  │  direction   │              │                       │              │   │
+│  │  │  confidence  │              │                       │              │   │
+│  │  └──────────────┘              │                       │              │   │
+│  │                                │                       │              │   │
+│  │  ┌──────────────┐              │                       │              │   │
+│  │  │ «block»      │◄─────────────┘                       │              │   │
+│  │  │ InCabinSpkr  │  BIST DAC out                        │              │   │
+│  │  │──────────────│                                      │              │   │
+│  │  │ «QM HW»     │                                      │              │   │
+│  │  │ ASIL: QM    │                                      │              │   │
+│  │  │──────────────│                                      │              │   │
+│  │  │ freqResp:    │                                      │              │   │
+│  │  │  500-3000 Hz│                                      │              │   │
+│  │  │ splAtMic:    │                                      │              │   │
+│  │  │  >= 70 dB   │                                      │              │   │
+│  │  └──────────────┘                                      │              │   │
+│  └────────────────────────────────────────────────────────┼──────────────┘   │
+│                                                           │                  │
+│                                                           │ rawAudioFrame    │
+│                                         ┌─────────────────┼──────────────┐   │
+│  ┌───────────────────┐                  │ ASIL B Boundary  │              │   │
+│  │ «block»           │                  │                  ▼              │   │
+│  │ VehicleSafety     │◄──mrmRequest─────│  ┌─────────────────────────┐  │   │
+│  │ Manager           │                  │  │ «block»                 │  │   │
+│  │───────────────────│                  │  │ AIQL                    │  │   │
+│  │ «ASIL D»         │                  │  │─────────────────────────│  │   │
+│  │───────────────────│                  │  │ «ASIL B SW»            │  │   │
+│  │ +initiateMRM()    │                  │  │─────────────────────────│  │   │
+│  │ +controlledStop() │                  │  │ (see IBD in 4.1.2)     │  │   │
+│  └───────────────────┘                  │  └────────────┬────────────┘  │   │
+│                                         │               │               │   │
+│                                         └───────────────┼───────────────┘   │
+│                                                         │                    │
+│                                                         │ qualifiedFrame     │
+│                                                         ▼                    │
+│                          ┌────────────────────────────────────────────────┐  │
+│                          │ «block» NDAS_DRIVE_AV                          │  │
+│                          │────────────────────────────────────────────────│  │
+│                          │ «ASIL (mixed)»                                │  │
+│                          │────────────────────────────────────────────────│  │
+│                          │ +multiSensorFusion(camera, lidar, radar,      │  │
+│                          │                    audio, ultrasonic)          │  │
+│                          │ +emergencyVehicleDetection()                   │  │
+│                          │ +trajectoryPlanning()                         │  │
+│                          │ +safetyForceField()                           │  │
+│                          └────────────────────────────────────────────────┘  │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │ «block» DRIVE_OS  (DriveOS 7, ASIL-D)                                 │  │
+│  │ CUDA · TensorRT · NvMedia · Hardware Hypervisor · MIG Partitioning    │  │
+│  │ MPU/MMU · Watchdog Timer · DMA Firewall · Time-Partitioned Scheduler  │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 4.1.2 AIQL Internal Structure — Internal Block Diagram (SysML IBD)
+
+The following diagram defines the internal parts, connectors, and item flows within the AIQL block. Each sub-block maps to a SysML `«part»` typed by the corresponding block definition.
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ ibd [block] AIQL                                                          ASIL B      │
+│                                                                                        │
+│  PORTS (SysML FlowPorts):                                                             │
+│    pIn_rawFrame     : in  RawAudioFrame       (from AudioDriver, shared mem)          │
+│    pOut_qualFrame   : out QualifiedAudioFrame  (to NDAS DRIVE AV)                     │
+│    pOut_bistSignal  : out BISTSignal           (to Codec DAC -> Speakers)             │
+│    pOut_mrmRequest  : out MRMRequest           (to Vehicle Safety Manager)            │
+│    pOut_diagLog     : out DiagnosticEvent      (to NV storage)                        │
+│                                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                                                                                  │  │
+│  │                      ┌──────────────────────────────────┐                        │  │
+│  │  pIn_rawFrame ──────>│ «part» inputDemux                │                        │  │
+│  │                      │ Demultiplexes incoming frame      │                        │  │
+│  │                      │ fields for parallel checks        │                        │  │
+│  │                      └──┬───────┬───────┬───────┬─────┬─┘                        │  │
+│  │                         │       │       │       │     │                           │  │
+│  │              timestamp  │ alive │ crc32 │ seq   │ audio_data                      │  │
+│  │              _us        │ _ctr  │       │ _ctr  │ + classifier                    │  │
+│  │                         │       │       │       │                                 │  │
+│  │                    ┌────▼────┐  │  ┌────▼────┐  │  ┌────────────────────────┐     │  │
+│  │                    │ «part» │  │  │ «part» │  │  │ «part»                │     │  │
+│  │                    │ fresh  │  │  │ crc    │  │  │ rangeValidator        │     │  │
+│  │                    │ Check  │  │  │ Check  │  │  │                      │     │  │
+│  │                    │────────│  │  │────────│  │  │──────────────────────│     │  │
+│  │                    │stale   │  │  │compute │  │  │ sampleAmplitude:    │     │  │
+│  │                    │Thresh: │  │  │CRC over│  │  │  saturation < 5%   │     │  │
+│  │                    │ 100 ms │  │  │all flds│  │  │ dcOffset:           │     │  │
+│  │                    │        │  │  │compare │  │  │  [-500, +500] LSB  │     │  │
+│  │                    │out:    │  │  │to rxd  │  │  │ noiseFloorRMS:      │     │  │
+│  │                    │ PASS/  │  │  │        │  │  │  > 10 LSB          │     │  │
+│  │                    │ FAIL + │  │  │out:    │  │  │ classifierProb:     │     │  │
+│  │                    │ FF_    │  │  │ PASS/  │  │  │  [0.0, 1.0]        │     │  │
+│  │                    │ FRESH  │  │  │ FAIL + │  │  │ directionDOA:       │     │  │
+│  │                    └───┬────┘  │  │ FF_CRC │  │  │  [-180, +180]      │     │  │
+│  │                        │       │  └───┬────┘  │  │                      │     │  │
+│  │                        │  ┌────▼────┐ │       │  │out: PASS/FAIL +     │     │  │
+│  │                        │  │ «part» │ │  ┌────▼─┤    FF_RANGE          │     │  │
+│  │                        │  │ alive  │ │  │     └──────────┬───────────┘     │  │
+│  │                        │  │ Check  │ │  │                │                 │  │
+│  │                        │  │────────│ │  │                │                 │  │
+│  │                        │  │prev +1 │ │  │                │                 │  │
+│  │                        │  │mod 256 │ │  │                │                 │  │
+│  │                        │  │3 consec│ │  │                │                 │  │
+│  │                        │  │violat  │ │  │                │                 │  │
+│  │                        │  │->DEGRDD│ │  │                │                 │  │
+│  │                        │  │        │ │  │                │                 │  │
+│  │                        │  │out:    │ │  ┌────▼────┐      │                 │  │
+│  │                        │  │ PASS/  │ │  │ «part» │      │                 │  │
+│  │                        │  │ FAIL + │ │  │ seq    │      │                 │  │
+│  │                        │  │ FF_    │ │  │ Check  │      │                 │  │
+│  │                        │  │ ALIVE  │ │  │────────│      │                 │  │
+│  │                        │  └───┬────┘ │  │monoton │      │                 │  │
+│  │                        │      │      │  │incr w/ │      │                 │  │
+│  │                        │      │      │  │16-bit  │      │                 │  │
+│  │                        │      │      │  │wrap    │      │                 │  │
+│  │                        │      │      │  │        │      │                 │  │
+│  │                        │      │      │  │out:    │      │                 │  │
+│  │                        │      │      │  │ PASS/  │      │                 │  │
+│  │                        │      │      │  │ FAIL + │      │                 │  │
+│  │                        │      │      │  │ FF_SEQ │      │                 │  │
+│  │                        │      │      │  └───┬────┘      │                 │  │
+│  │                        │      │      │      │           │                 │  │
+│  │   ─────────────────────┴──────┴──────┴──────┴───────────┘                 │  │
+│  │   │  checkResults[5] : {PASS|FAIL, failure_flag}                          │  │
+│  │   │                                                                       │  │
+│  │   ▼                                                                       │  │
+│  │  ┌────────────────────────────────────────────────────────────────────┐   │  │
+│  │  │ «part» qualificationDecision                                       │   │  │
+│  │  │ (Qualification Decision Engine)                                    │   │  │
+│  │  │────────────────────────────────────────────────────────────────────│   │  │
+│  │  │                                                                    │   │  │
+│  │  │  Inputs:                                                           │   │  │
+│  │  │    checkResults[5]  <- freshnessCheck, aliveCheck, crcCheck,      │   │  │
+│  │  │                       seqCheck, rangeValidator                    │   │  │
+│  │  │    bistResult       <- bistModule.passFailResult                  │   │  │
+│  │  │    currentState     <- stateMachine.state                         │   │  │
+│  │  │                                                                    │   │  │
+│  │  │  Logic:                                                            │   │  │
+│  │  │    allChecksPassed = AND(checkResults[0..4])                       │   │  │
+│  │  │    anyCheckFailed  = OR(NOT(checkResults[0..4]))                   │   │  │
+│  │  │    bistFailed      = bistResult.failed AND retriesExhausted       │   │  │
+│  │  │                                                                    │   │  │
+│  │  │  Output:                                                           │   │  │
+│  │  │    stateTransitionCmd  -> stateMachine                            │   │  │
+│  │  │    aggregateFlags      -> failure_flags : uint16                  │   │  │
+│  │  │                                                                    │   │  │
+│  │  └──────────────────────────────────┬─────────────────────────────────┘   │  │
+│  │                                     │                                     │  │
+│  │                 stateTransitionCmd   │   aggregateFlags                    │  │
+│  │                                     ▼                                     │  │
+│  │  ┌────────────────────────────────────────────────────────────────────┐   │  │
+│  │  │ «part» stateMachine                                                │   │  │
+│  │  │ (AIQL Qualification State Machine — see stm in Section 10.1)       │   │  │
+│  │  │────────────────────────────────────────────────────────────────────│   │  │
+│  │  │                                                                    │   │  │
+│  │  │  ┌───────────┐  anyFail   ┌──────────┐  3 consec  ┌────────────┐ │   │  │
+│  │  │  │ QUALIFIED ├───────────>│ DEGRADED ├──failures─>│NOT_QUALFIED│ │   │  │
+│  │  │  │           │<───────────┤          │<───────────┤            │ │   │  │
+│  │  │  │           │  10 valid  │          │  20 valid  │            │ │   │  │
+│  │  │  └───────────┘  frames    └──────────┘  frames    └─────┬──────┘ │   │  │
+│  │  │       ▲                                          BIST   │        │   │  │
+│  │  │       │ startup                                  fail   │        │   │  │
+│  │  │       │ BIST pass                              (retries │        │   │  │
+│  │  │  ┌────┴──────┐                               exhausted)│        │   │  │
+│  │  │  │   INIT    │                                         ▼        │   │  │
+│  │  │  │ (power-on)│                              ┌──────────────┐    │   │  │
+│  │  │  └───────────┘                              │MRM_REQUESTED │    │   │  │
+│  │  │                                             │  (terminal)  │    │   │  │
+│  │  │  Output:                                    └──────────────┘    │   │  │
+│  │  │    state              : enum {QUALIFIED, DEGRADED,              │   │  │
+│  │  │                               NOT_QUALIFIED, MRM_REQUESTED}     │   │  │
+│  │  │    qualification_status: enum8 (0x01, 0x02, 0x03)               │   │  │
+│  │  │    mrmRequestTrigger  : bool                                    │   │  │
+│  │  └──────────────┬──────────────────────────┬────────────────┬─────┘   │  │
+│  │                 │                          │                │          │  │
+│  │                 │ qualification_status      │ mrmRequest     │ state    │  │
+│  │                 │ + failure_flags           │ Trigger        │          │  │
+│  │                 ▼                          ▼                │          │  │
+│  │  ┌──────────────────────────┐   ┌─────────────────┐        │          │  │
+│  │  │ «part» outputAssembler   │   │                 │        │          │  │
+│  │  │                          │   │  pOut_mrmReq ───┼──────> pOut_      │  │
+│  │  │ Assembles output frame:  │   │                 │        mrmRequest │  │
+│  │  │  if QUALIFIED:           │   └─────────────────┘                   │  │
+│  │  │   pass-through audio +   │                                         │  │
+│  │  │   classifier             │                                         │  │
+│  │  │  if DEGRADED:            │                                         │  │
+│  │  │   pass-through +         │                                         │  │
+│  │  │   failure_flags          │                                         │  │
+│  │  │  if NOT_QUALIFIED:       │                                         │  │
+│  │  │   zero-fill audio +      │                                         │  │
+│  │  │   zero-fill classifier   │                                         │  │
+│  │  │                          │                                         │  │
+│  │  │  Compute aiql_crc32      │                                         │  │
+│  │  │  Output at 20 Hz always  │                                         │  │
+│  │  └─────────────┬────────────┘                                         │  │
+│  │                │                                                      │  │
+│  │                │ QualifiedAudioFrame                                   │  │
+│  │                ▼                                                      │  │
+│  │           pOut_qualFrame ──────────────────────> (to NDAS DRIVE AV)   │  │
+│  │                                                                       │  │
+│  │  ═════════════════════════════════════════════════════════════════     │  │
+│  │  BIST Subsystem                                                       │  │
+│  │  ═════════════════════════════════════════════════════════════════     │  │
+│  │                                                                       │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐   │  │
+│  │  │ «part» bistModule                                              │   │  │
+│  │  │ (Speaker-Microphone Loopback BIST)                             │   │  │
+│  │  │────────────────────────────────────────────────────────────────│   │  │
+│  │  │                                                                │   │  │
+│  │  │  ┌──────────────────┐     ┌──────────────────────────────────┐│   │  │
+│  │  │  │ «part»           │     │ «part»                           ││   │  │
+│  │  │  │ signalGenerator  │     │ spectralMatchVerifier            ││   │  │
+│  │  │  │                  │     │                                  ││   │  │
+│  │  │  │ sineSweep:       │     │ algorithm:                      ││   │  │
+│  │  │  │  500-3000 Hz     │     │  1. FFT of captured mic signal  ││   │  │
+│  │  │  │  logarithmic     │     │  2. FFT of known reference      ││   │  │
+│  │  │  │ amplitude:       │     │  3. Normalized cross-corr       ││   │  │
+│  │  │  │  -20 dBFS        │     │     >= 0.85 threshold           ││   │  │
+│  │  │  │ THD: < 1%        │     │  4. 1/3-octave band amplitude  ││   │  │
+│  │  │  │ freqAccuracy:    │     │     +/- 6 dB tolerance         ││   │  │
+│  │  │  │  +/- 2%          │     │                                  ││   │  │
+│  │  │  │                  │     │ out: correlation, bandAmpl[],    ││   │  │
+│  │  │  │ startup: 2000 ms │     │      PASS/FAIL                  ││   │  │
+│  │  │  │ periodic: 200 ms │     └──────────────┬───────────────────┘│   │  │
+│  │  │  │                  │                    │                    │   │  │
+│  │  │  │ out: bist_       │                    │                    │   │  │
+│  │  │  │  samples[]       │                    │                    │   │  │
+│  │  │  └────────┬─────────┘                    │                    │   │  │
+│  │  │           │                              │                    │   │  │
+│  │  │           │                  ┌───────────▼──────────────────┐ │   │  │
+│  │  │           │                  │ «part»                       │ │   │  │
+│  │  │           │                  │ signalCanceller              │ │   │  │
+│  │  │           │                  │                              │ │   │  │
+│  │  │           │                  │ Subtracts known BIST signal  │ │   │  │
+│  │  │           │                  │ from audio during periodic   │ │   │  │
+│  │  │           │                  │ BIST window                  │ │   │  │
+│  │  │           │                  │                              │ │   │  │
+│  │  │           │                  │ attenuation: >= 30 dB        │ │   │  │
+│  │  │           │                  │ -> cleaned audio to          │ │   │  │
+│  │  │           │                  │    outputAssembler           │ │   │  │
+│  │  │           │                  └──────────────────────────────┘ │   │  │
+│  │  │           │                                                   │   │  │
+│  │  │           │                  ┌──────────────────────────────┐ │   │  │
+│  │  │           │                  │ «part»                       │ │   │  │
+│  │  │           │                  │ bistRetryController          │ │   │  │
+│  │  │           │                  │                              │ │   │  │
+│  │  │           │                  │ startup: 3 retries max       │ │   │  │
+│  │  │           │                  │ periodic: 2 retries max      │ │   │  │
+│  │  │           │                  │ interval: 60 s periodic      │ │   │  │
+│  │  │           │                  │                              │ │   │  │
+│  │  │           │                  │ out: passFailResult,         │ │   │  │
+│  │  │           │                  │   retriesExhausted           │ │   │  │
+│  │  │           │                  │   -> qualificationDecision   │ │   │  │
+│  │  │           │                  └──────────────────────────────┘ │   │  │
+│  │  │           │                                                   │   │  │
+│  │  │  pOut_bistSignal ────────────────────> (to Codec DAC          │   │  │
+│  │  │                                         -> Speakers)          │   │  │
+│  │  └───────────────────────────────────────────────────────────────┘   │  │
+│  │                                                                       │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐   │  │
+│  │  │ «part» hwProtection (provided by DRIVE OS)                     │   │  │
+│  │  │────────────────────────────────────────────────────────────────│   │  │
+│  │  │ mpuMmu      : spatial FFI  — isolates AIQL memory from QM     │   │  │
+│  │  │ watchdog    : temporal FFI — 100 ms timeout                    │   │  │
+│  │  │ dmaFirewall : restricts QM DMA to audio buffer region          │   │  │
+│  │  │ scheduler   : guaranteed CPU budget (dedicated core or 10%)    │   │  │
+│  │  └────────────────────────────────────────────────────────────────┘   │  │
+│  │                                                                       │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### 4.2 Interface Definitions
 
 #### 4.2.1 Input Interface: Audio Driver → AIQL
@@ -261,6 +579,64 @@ The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-
 | `duration_ms` | uint16 | 2 | Signal duration in milliseconds |
 | `bist_samples` | int16[] | variable | PCM samples for speaker output |
 
+#### 4.2.6 SysML Interface Block Definitions
+
+The following interface blocks define the typed flows for all AIQL FlowPorts. Each maps to a SysML `«interfaceBlock»`.
+
+```
+«interfaceBlock» RawAudioFrame                «interfaceBlock» QualifiedAudioFrame
+┌──────────────────────────────────┐          ┌─────────────────────────────────────┐
+│ frame_id        : uint32         │          │ frame_id             : uint32       │
+│ timestamp_us    : uint64         │          │ timestamp_us         : uint64       │
+│ alive_counter   : uint8          │          │ qualification_status : enum8        │
+│ sequence_counter: uint16         │          │   {QUALIFIED=0x01,                  │
+│ sample_rate_hz  : uint32         │          │    DEGRADED=0x02,                   │
+│ num_channels    : uint8          │          │    NOT_QUALIFIED=0x03}              │
+│ num_samples     : uint16         │          │ audio_data           : int16[]      │
+│ audio_data      : int16[]        │          │ classifier_output    : ClassifierOut│
+│ classifier_output: ClassifierOut │          │ failure_flags        : uint16       │
+│ crc32           : uint32         │          │ aiql_crc32           : uint32       │
+└──────────────────────────────────┘          └─────────────────────────────────────┘
+
+«interfaceBlock» ClassifierOutput             «interfaceBlock» BISTSignal
+┌──────────────────────────────────┐          ┌─────────────────────────────────────┐
+│ siren_probability : float32      │          │ bist_sequence_id : uint16           │
+│ horn_probability  : float32      │          │ signal_type      : enum8            │
+│ direction_deg     : float32      │          │   {SINE_SWEEP=0x01,                 │
+│ confidence        : float32      │          │    SINGLE_TONE=0x02}                │
+└──────────────────────────────────┘          │ start_freq_hz    : uint16 = 500     │
+                                              │ end_freq_hz      : uint16 = 3000    │
+«interfaceBlock» FailureFlags                 │ amplitude_dbfs   : int8   = -20     │
+┌──────────────────────────────────┐          │ duration_ms      : uint16           │
+│ bit 0 : FF_FRESHNESS             │          │ bist_samples     : int16[]          │
+│ bit 1 : FF_ALIVE                 │          └─────────────────────────────────────┘
+│ bit 2 : FF_CRC                   │
+│ bit 3 : FF_SEQUENCE              │          «interfaceBlock» MRMRequest
+│ bit 4 : FF_RANGE                 │          ┌─────────────────────────────────────┐
+│ bit 5 : FF_TIMEOUT               │          │ request_type  : enum8               │
+│ bit 6 : FF_OVERFLOW              │          │   {BIST_STARTUP_FAIL,               │
+│ bit 7 : FF_BIST_FAIL             │          │    BIST_PERIODIC_FAIL}              │
+│ bit 8 : FF_BIST_SPEAKER          │          │ failure_detail : uint16             │
+│ bit 9 : FF_BIST_COUPLING         │          │ timestamp_us   : uint64             │
+│ bit 10-15 : reserved             │          └─────────────────────────────────────┘
+└──────────────────────────────────┘
+
+«interfaceBlock» DiagnosticEvent
+┌──────────────────────────────────┐
+│ event_type    : enum8            │
+│   {STATE_TRANSITION,             │
+│    FLAG_ASSERT,                  │
+│    FLAG_DEASSERT,                │
+│    BIST_RESULT,                  │
+│    RECOVERY}                     │
+│ timestamp_us  : uint64           │
+│ prev_state    : enum8            │
+│ new_state     : enum8            │
+│ failure_flags : uint16           │
+│ bist_correlation : float32       │
+└──────────────────────────────────┘
+```
+
 ### 4.3 Timing Architecture
 
 ```
@@ -292,6 +668,182 @@ BIST Timing:
     - Interval:                          every 60 seconds
     - Spectral match analysis:            50 ms
     - Signal cancellation for NDAS DRIVE AV: within same 200 ms window
+```
+
+### 4.4 SysML Block/Part Summary
+
+The following table enumerates all SysML model elements for tool import (Cameo Systems Modeler, Rhapsody, Enterprise Architect, etc.).
+
+| SysML Element | Stereotype | ASIL | Parent | Ports (FlowPort direction : type) |
+|---|---|---|---|---|
+| `DRIVE_AGX_Thor_Platform` | `«block»` | — | *(top-level)* | — |
+| `InCabinMicArray` | `«block»` | QM | Platform | pOut_analogAudio : out AnalogAudio |
+| `AudioCodec` | `«block»` | QM | Platform | pIn_analog : in AnalogAudio, pOut_i2s : out I2S_TDM, pIn_dacPcm : in BISTSignal |
+| `SirenHornClassifier` | `«block»` | QM | Platform | pIn_pcm : in I2S_TDM, pOut_classResult : out ClassifierOutput |
+| `AudioDriver` | `«block»` | QM | Platform | pIn_i2s : in I2S_TDM, pIn_classResult : in ClassifierOutput, pOut_rawFrame : out RawAudioFrame |
+| `InCabinSpeakers` | `«block»` | QM | Platform | pIn_dacSignal : in AnalogAudio |
+| **`AIQL`** | **`«block»`** | **B** | Platform | pIn_rawFrame : in RawAudioFrame, pOut_qualFrame : out QualifiedAudioFrame, pOut_bistSignal : out BISTSignal, pOut_mrmRequest : out MRMRequest, pOut_diagLog : out DiagnosticEvent |
+| `AIQL::inputDemux` | `«part»` | B | AIQL | — |
+| `AIQL::freshnessCheck` | `«part»` | B | AIQL | — |
+| `AIQL::aliveCheck` | `«part»` | B | AIQL | — |
+| `AIQL::crcCheck` | `«part»` | B | AIQL | — |
+| `AIQL::seqCheck` | `«part»` | B | AIQL | — |
+| `AIQL::rangeValidator` | `«part»` | B | AIQL | — |
+| `AIQL::qualificationDecision` | `«part»` | B | AIQL | — |
+| `AIQL::stateMachine` | `«part»` | B | AIQL | — |
+| `AIQL::outputAssembler` | `«part»` | B | AIQL | — |
+| `AIQL::bistModule` | `«part»` | B | AIQL | — |
+| `AIQL::bistModule::signalGenerator` | `«part»` | B | bistModule | — |
+| `AIQL::bistModule::spectralMatchVerifier` | `«part»` | B | bistModule | — |
+| `AIQL::bistModule::signalCanceller` | `«part»` | B | bistModule | — |
+| `AIQL::bistModule::bistRetryController` | `«part»` | B | bistModule | — |
+| `AIQL::hwProtection` | `«part»` | D | AIQL | *(provided by DRIVE OS)* |
+| `NDAS_DRIVE_AV` | `«block»` | Mixed | Platform | pIn_qualFrame : in QualifiedAudioFrame |
+| `VehicleSafetyManager` | `«block»` | D | Platform | pIn_mrmRequest : in MRMRequest |
+| `DRIVE_OS` | `«block»` | D | Platform | — |
+
+### 4.5 Data Flow Sequences
+
+The following sequences define the nominal and BIST processing flows. Map each to a SysML **Sequence Diagram** or **Activity Diagram**.
+
+#### 4.5.1 Nominal Frame Processing (every 50 ms)
+
+```
+AudioDriver              AIQL                                          NDAS DRIVE AV
+    |                      |                                                |
+    |  rawAudioFrame       |                                                |
+    |  (shared mem, 20 Hz) |                                                |
+    |─────────────────────>|                                                |
+    |                      |                                                |
+    |                      |──> inputDemux                                  |
+    |                      |     |                                          |
+    |                      |     |── timestamp_us ──> freshnessCheck        |
+    |                      |     |── alive_ctr    ──> aliveCheck            |
+    |                      |     |── all_fields   ──> crcCheck              |
+    |                      |     |── seq_ctr      ──> seqCheck              |
+    |                      |     |── audio_data   ──> rangeValidator        |
+    |                      |     |   + classifier ──> rangeValidator        |
+    |                      |                                                |
+    |                      |  checkResults[5]                               |
+    |                      |     |                                          |
+    |                      |     v                                          |
+    |                      |  qualificationDecision                         |
+    |                      |     | + bistResult (from bistModule)           |
+    |                      |     | + currentState (from stateMachine)       |
+    |                      |     |                                          |
+    |                      |     |--> stateTransitionCmd                    |
+    |                      |     |       |                                  |
+    |                      |     |       v                                  |
+    |                      |     |    stateMachine.evaluate()               |
+    |                      |     |       |                                  |
+    |                      |     |       |--> qualification_status          |
+    |                      |     |       |--> mrmRequestTrigger (if any)    |
+    |                      |     |                                          |
+    |                      |     |--> aggregateFlags                        |
+    |                      |             |                                  |
+    |                      |             v                                  |
+    |                      |          outputAssembler.build()               |
+    |                      |             |                                  |
+    |                      |             | QualifiedAudioFrame              |
+    |                      |             |  { frame_id,                     |
+    |                      |             |    timestamp_us,                 |
+    |                      |             |    qualification_status,         |
+    |                      |             |    audio_data,                   |
+    |                      |             |    classifier_output,            |
+    |                      |             |    failure_flags,                |
+    |                      |             |    aiql_crc32 }                  |
+    |                      |             |                                  |
+    |                      |  pOut_qualFrame                                |
+    |                      |─────────────────────────────────────────────-->|
+    |                      |                                                |
+```
+
+#### 4.5.2 Startup BIST Sequence (at power-on, before QUALIFIED)
+
+```
+AIQL                  Codec (DAC)    In-Cabin      Codec (ADC)     AIQL
+bistModule            QM HW          Speakers      + Mic Array     bistModule
+    |                    |           QM HW             |               |
+    |                    |              |               |               |
+    | signalGenerator    |              |               |               |
+    | generates 2000 ms  |              |               |               |
+    | sine sweep         |              |               |               |
+    | 500-3000 Hz        |              |               |               |
+    | -20 dBFS           |              |               |               |
+    |                    |              |               |               |
+    |  BISTSignal        |              |               |               |
+    |  (pOut_bistSignal) |              |               |               |
+    |───────────────────>|              |               |               |
+    |                    | DAC output   |               |               |
+    |                    |─────────────>|               |               |
+    |                    |              | acoustic      |               |
+    |                    |              | propagation   |               |
+    |                    |              | (in-cabin     |               |
+    |                    |              |  air path)    |               |
+    |                    |              |──────────────>|               |
+    |                    |              |               | ADC capture   |
+    |                    |              |               | (via normal   |
+    |                    |              |               |  audio path)  |
+    |                    |              |               |               |
+    |                    |              |         rawAudioFrame with    |
+    |                    |              |         BIST signal captured  |
+    |<─────────────────────────────────────────────────────────────────|
+    |                                                                  |
+    | spectralMatchVerifier:                                           |
+    |  1. FFT(captured_mic_signal)                                     |
+    |  2. FFT(known_reference_signal)                                  |
+    |  3. normalized_cross_correlation                                 |
+    |  4. 1/3-octave band amplitude check                              |
+    |                                                                  |
+    |  correlation >= 0.85?  ──YES──> PASS ──> stateMachine: QUALIFIED |
+    |                        ──NO───> FAIL                             |
+    |                                   |                              |
+    |  bistRetryController:             |                              |
+    |    retry count < 3? ────YES────> retry (loop back to sweep)      |
+    |                     ────NO─────> FAIL CONFIRMED                  |
+    |                                   |                              |
+    |                                   v                              |
+    |                          stateMachine: MRM_REQUESTED             |
+    |                          pOut_mrmRequest ──> VehicleSafetyManager |
+    |                                                                  |
+```
+
+#### 4.5.3 Periodic BIST Sequence (every 60 s during QUALIFIED)
+
+```
+AIQL              Codec (DAC)    Speakers    Mic Array      AIQL           NDAS
+bistModule        QM HW          QM HW       + Codec        bistModule     DRIVE AV
+    |                |              |            |               |             |
+    | [timer: 60 s]  |              |            |               |             |
+    |                |              |            |               |             |
+    | signalGenerator|              |            |               |             |
+    | 200 ms burst   |              |            |               |             |
+    | (abbreviated)  |              |            |               |             |
+    |                |              |            |               |             |
+    |  BISTSignal    |              |            |               |             |
+    |───────────────>|──────────────>|───acoustic─>|              |             |
+    |                |              |            |               |             |
+    |                |              |      rawAudioFrame         |             |
+    |                |              |      (BIST + real audio)   |             |
+    |<──────────────────────────────────────────────────────────|             |
+    |                                                           |             |
+    | signalCanceller:                                          |             |
+    |   cleaned_audio = raw_audio - known_bist_signal           |             |
+    |   attenuation >= 30 dB                                    |             |
+    |                                                           |             |
+    |   cleaned_audio ──> outputAssembler ──> pOut_qualFrame ──────────────-->|
+    |                                                           |             |
+    | spectralMatchVerifier (simultaneous):                     |             |
+    |   correlation >= 0.85?                                    |             |
+    |                                                           |             |
+    |   YES ──> PASS ──> continue QUALIFIED, reset retry count  |             |
+    |   NO  ──> FAIL ──> bistRetryController                    |             |
+    |                      retry count < 2? ──YES──> retry      |             |
+    |                                       ──NO──> FAIL CONFIRMED            |
+    |                                                  |                      |
+    |                                      stateMachine: MRM_REQUESTED        |
+    |                                      pOut_mrmRequest ──> VehicleSafMgr  |
+    |                                                                         |
 ```
 
 ---
