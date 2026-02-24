@@ -7,10 +7,10 @@
 | **Document ID** | TSC-001 |
 | **Title** | Audio Input Qualification Layer (AIQL) — Technical Safety Concept |
 | **ASIL Target** | ASIL B |
-| **Safety Goal** | SG-03 |
-| **HARA Reference** | HARA-0003 |
+| **Safety Goal** | SG-EMV-01 |
+| **HARA Reference** | Audio_HARA / UC-React-to-EMV — Row: "Yield to Activated EMV (Highway), siren+lights, slow/stationary in front" |
 | **Item** | NDAS DRIVE AV Stack — Audio Input Path (on DRIVE AGX Thor / Hyperion 10) |
-| **Version** | 0.6 |
+| **Version** | 0.7 |
 | **Status** | In Development |
 | **Author** | Safety Engineering |
 | **Created** | 2026-02-22 |
@@ -21,7 +21,7 @@
 
 | Relationship | Document |
 |-------------|----------|
-| Parent | HARA-001 — Hazard Analysis and Risk Assessment |
+| Parent | Audio_HARA — Hazard Analysis and Risk Assessment (UC-React-to-EMV) |
 | Sibling | FMEA-001 — System FMEA |
 | Sibling | SOTIF-001 — SOTIF Analysis |
 | Reference | REF-001 — ASIL Determination Matrix |
@@ -37,6 +37,7 @@
 | 0.4 | 2026-02-23 | Safety Engineering | Confirmed in-cabin microphone placement; added Speaker-Microphone Loopback BIST (Built-In Self-Test) with MRM transition; added TSR-AIQL-015 through -019; added FM-09/FM-10/FM-11; added AoU-011/AoU-012; added FI-10 through FI-14; added TC-AUDIO-05; added Appendix E (BIST architecture); updated traceability and coverage |
 | 0.5 | 2026-02-23 | Safety Engineering | Corrected platform architecture framing: Alpamayo is a foundation-model research layer above NDAS/DRIVE AV, not the direct runtime consumer. Replaced all "Alpamayo" runtime references with "NDAS DRIVE AV" (the on-vehicle perception pipeline on DRIVE AGX Thor / Hyperion 10). Updated Item field, boundary diagrams, safety goal, failure mode effects, TSRs, state machine, FFI analysis, V&V, SOTIF, traceability, open items, and glossary. Added NDAS, DRIVE AGX Thor, DRIVE Hyperion 10 to glossary. |
 | 0.6 | 2026-02-23 | Safety Engineering | Added SysML architecture views: Block Definition Diagram (4.1.1), Internal Block Diagram (4.1.2), Interface Block Definitions (4.2.6), Block/Part Summary Table (4.4), and Data Flow Sequences for nominal processing, startup BIST, and periodic BIST (4.5). |
+| 0.7 | 2026-02-24 | Safety Engineering | Aligned to Audio_HARA.xlsx (UC-React-to-EMV): corrected S/E/C from S2/E3/C2 to S3/E2/C3; updated hazardous event to "collision with EMV slow/stationary in front on highway"; renamed SG-03 to SG-EMV-01; updated safety goal text; added full HARA scenario context table (Section 5.1); updated FTTI justification for highway EMV-in-front scenario; updated SOTIF TC-AUDIO-01 hazardous behavior; partially resolved OI-02; updated HARA references throughout. |
 
 ---
 
@@ -852,58 +853,71 @@ bistModule        QM HW          QM HW       + Codec        bistModule     DRIVE
 
 ### 5.1 Safety Goal Definition
 
-**SG-03: The audio input path shall provide qualified siren/horn detection data to the NDAS DRIVE AV perception pipeline such that the autonomous vehicle can detect and yield to emergency vehicles within the operational design domain.**
+**SG-EMV-01: The autonomous vehicle shall avoid collision with activated emergency vehicles (siren + flashing lights) driving slowly or stationary in front on access-controlled highways.**
 
 | Attribute | Value |
 |-----------|-------|
-| Safety Goal ID | SG-03 |
+| Safety Goal ID | SG-EMV-01 |
 | Item | Audio Input Path (Microphone → Codec → Driver → AIQL → NDAS DRIVE AV) |
-| Hazardous Event | Failure to yield to approaching emergency vehicle due to undetected or misclassified siren/horn audio |
-| Sensor Role | **Secondary** — audio supplements primary sensors (camera, LiDAR, radar) for emergency vehicle detection. NDAS DRIVE AV multi-sensor fusion uses audio as an additional input channel; driving decisions are not solely dependent on audio. |
-| HARA Reference | HARA-0003 |
+| Hazardous Event | Collision with emergency vehicle in operation (siren + flashing lights) that is slow or stationary in front of the ego vehicle on an access-controlled highway with middle separation |
+| Collision Type | Side-front collision at highway speed |
+| Sensor Role | **Secondary** — audio (siren detection) supplements primary sensors (camera for flashing lights/vehicle shape, LiDAR/radar for stationary/slow object) for emergency vehicle detection. NDAS DRIVE AV multi-sensor fusion uses audio as an additional input channel; driving decisions are not solely dependent on audio. |
+| HARA Reference | Audio_HARA / UC-React-to-EMV — Row: "Yield to Activated EMV (Highway), siren+lights, slow/stationary in front" |
+
+#### HARA Context — Related Scenarios
+
+The HARA (Audio_HARA.xlsx, sheet UC-React-to-EMV) analyzes multiple emergency vehicle interaction scenarios. The following table summarizes the complete HARA landscape and identifies which safety goal the AIQL supports:
+
+| Scenario | S | E | C | ASIL | Safety Goal | Audio Relevant? |
+|---|---|---|---|---|---|---|
+| Highway: EMV siren+lights **from behind** | S0 | — | C0 | Not safety critical | No SG | No — trailing vehicle has controllability |
+| Highway: EMV lights only **from behind** | S0 | — | C0 | Not safety critical | No SG | No |
+| Highway: EMV wrong direction (ghostdriver) | S3 | E1 | C2 | QM | Avoid collision w/ EMV in wrong dir. | No — QM, no safety goal |
+| **Highway: EMV siren+lights, slow/stationary in front** | **S3** | **E2** | **C3** | **ASIL B** | **SG-EMV-01 (this TSC)** | **Yes — siren is supplementary detection** |
+| Highway: Warning-signal vehicles in front (no siren) | S3 | E3 | C3 | ASIL C | Avoid collision w/ warning-signal veh. | No — lights only, no siren |
+| Urban intersection, low speed (<50 kph) | S2 | E2 | C1 | QM | — | No — QM |
+| Urban intersection, medium (50-70 kph) | S3 | E2 | C1 | QM | — | No — QM |
+| Urban intersection, high (70-90 kph) | S3 | E2 | C1→C2 | QM→ASIL A | Avoid collision w/ crossing EMV | Marginal — ASIL A, lower priority |
+
+The AIQL addresses **SG-EMV-01** (ASIL B). The ASIL C scenario (warning-signal vehicles) does not involve sirens and is outside the AIQL scope — it is addressed by visual detection at the system level.
 
 ### 5.2 ASIL Determination
 
-The ASIL for SG-03 is determined per ISO 26262-3 Table 4 using the following parameters:
+The ASIL for SG-EMV-01 is determined per ISO 26262-3 Table 4 using the parameters from the HARA (Audio_HARA.xlsx):
 
-#### Severity: S2 (Severe and life-threatening injuries, survival probable)
+#### Severity: S3 (Life-threatening injuries, survival uncertain)
 
-**Justification**: Failure to yield to an emergency vehicle at urban speeds (30-60 km/h) can result in a collision between the ego vehicle and the emergency vehicle, or force the emergency vehicle into an evasive maneuver that impacts other road users. The collision geometry (typically T-bone or side-impact at intersections) at urban speeds results in severe but typically survivable injuries. S3 is not assigned because:
-- Ego vehicle speeds in yielding scenarios are typically moderate (urban environment)
-- Emergency vehicles are braking/maneuvering, reducing closing speeds
-- The scenario involves failure to yield, not failure to brake for a direct collision
+**HARA justification**: Side-front collision at highway speed between the ego vehicle and a stationary or slow-moving emergency vehicle on an access-controlled highway. At highway speeds (≥ 100 km/h ego), the collision energy is sufficient to cause life-threatening injuries. The emergency vehicle may be stationary (blocking a lane after responding to an incident) or moving slowly, resulting in high closing speed and severe collision dynamics.
 
-#### Exposure: E3 (Medium probability — occurs in most driving scenarios)
+#### Exposure: E2 (Low probability)
 
-**Justification**: Emergency vehicle encounters are a common driving event. Urban driving constitutes a significant portion of operational time, and encounters with emergency vehicles (ambulances, fire trucks, police) occur frequently in urban environments. E4 is not assigned because:
-- Not every driving trip involves an emergency vehicle encounter
-- Highway driving (significant operational time) has lower encounter rates
-- Rural driving has substantially lower encounter rates
+**HARA justification (VDA 702 frequency exposure: 1 ≤ x < 10/year)**:
+- Activated emergency vehicles (siren + flashing lights) stationary or slow in front on access-controlled highways are encountered infrequently
+- Not every highway trip involves such an encounter
+- The specific scenario requires the EMV to be in the ego vehicle's lane or obstructing the travel path on a highway with middle separation
+- E3 is not assigned because the combined conditions (highway + EMV in front + same travel direction + siren active) have lower frequency than general EMV encounters
 
-#### Controllability: C2 (Normally controllable — more than 90% of drivers can manage)
+#### Controllability: C3 (Difficult to control or uncontrollable)
 
-**Justification**: An approaching emergency vehicle is a developing situation with multiple cues available to the driver (and other road users):
-- Visual cues: flashing lights, distinctive vehicle markings
-- Auditory cues: siren audible to nearby human drivers even if AV fails to detect
-- Other vehicle behavior: surrounding vehicles yielding provides cues
-- C3 is not assigned because controllability is supported by the developing nature of the scenario and redundant environmental cues
+**HARA justification**: "No driver" — this is a Level 4 autonomous vehicle with no human driver available to take control. The vehicle must handle the situation autonomously. C3 is the correct classification for all Level 4/5 AV scenarios where no human fallback is available.
 
 #### ASIL Result
 
-Per REF-001 (ASIL Determination Matrix): **S2 x E3 x C2 = ASIL B**
+Per ISO 26262-3 Table 4: **S3 × E2 × C3 = ASIL B**
 
-This is confirmed against ISO 26262-3 Table 4.
+This is confirmed by the HARA (Audio_HARA.xlsx, column K: "B").
 
 ### 5.3 Fault Tolerant Time Interval (FTTI)
 
 **FTTI: 500 ms**
 
-**Justification**: The emergency vehicle yielding scenario has a larger time budget than forward collision scenarios (which have 100-150 ms FTTI). The 500 ms FTTI is justified because:
+**Justification**: The HARA scenario involves an EMV that is slow or stationary in front on a highway. While the closing speed is high, the EMV is a large, visually conspicuous object (flashing lights, distinctive shape) detectable at significant range by primary sensors. The 500 ms FTTI for the audio subsystem is justified because:
 
-1. **Developing situation**: Emergency vehicles approach from behind or sides over multiple seconds; yielding is not a collision-imminent event
+1. **Primary sensor coverage**: Camera, LiDAR, and radar detect the stationary/slow EMV independently of audio. Audio failure does not create a detection gap — it reduces fusion confidence for EMV classification
 2. **Multiple detection opportunities**: At 20 Hz audio frame rate, 500 ms provides 10 audio frames for fault detection
-3. **Secondary sensor**: Audio is a supplementary input; primary sensors (camera, LiDAR, radar) continue emergency vehicle detection independently during the FTTI window. Loss of audio reduces fusion confidence but does not eliminate detection capability.
-4. **Vehicle dynamics**: Yielding involves lateral displacement (lane change) or controlled deceleration, both of which have response times on the order of seconds
+3. **Secondary sensor budget**: Audio contributes to earlier EMV classification (siren confirms the visual object is an EMV in operation), but the collision avoidance decision is driven by primary sensor object detection at much longer range than audio detection range
+4. **HARA scenario dynamics**: The ego vehicle approaches the stationary/slow EMV on the highway over several seconds; the NDAS DRIVE AV Safety Force Field will independently trigger braking for any stationary obstacle regardless of EMV classification
+5. **Vehicle dynamics**: Avoidance involves lateral displacement (lane change) or controlled deceleration, both of which have response times on the order of seconds at highway distances
 
 The 500 ms FTTI must be confirmed by system-level timing analysis (see Open Items, Section 14).
 
@@ -923,7 +937,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 | **Failure Mechanism** | Microphone hardware failure; codec power loss; driver crash; bus failure; memory allocation failure |
 | **Effect on NDAS DRIVE AV** | Total loss of siren/horn detection; emergency vehicle detection relies solely on camera |
 | **Detection Mechanism** | Frame reception timeout (TSR-AIQL-001), alive counter missing (TSR-AIQL-002); BIST loopback detection (TSR-AIQL-016); graceful degradation (TSR-AIQL-007) |
-| **Safety Impact** | Potential violation of SG-03 if camera-only detection is insufficient |
+| **Safety Impact** | Potential violation of SG-EMV-01 if camera-only detection is insufficient |
 | **Frequency Estimate** | Low (hardware failure rate ~500 FIT for complete path loss) |
 
 #### FM-02: Audio Data Corruption
@@ -934,7 +948,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 | **Failure Mechanism** | Memory bit-flip (SEU); DMA error; buffer overrun in driver; EMI-induced data corruption on I2S bus |
 | **Effect on NDAS DRIVE AV** | Corrupted audio may cause false siren detections (false positive) or mask real sirens (false negative) |
 | **Detection Mechanism** | CRC-32 integrity check (TSR-AIQL-003), range validation (TSR-AIQL-005); graceful degradation (TSR-AIQL-007) |
-| **Safety Impact** | False positive: unwarranted yielding (nuisance). False negative: violates SG-03 |
+| **Safety Impact** | False positive: unwarranted yielding (nuisance). False negative: violates SG-EMV-01 |
 | **Frequency Estimate** | Medium (SEU rate ~200 FIT; EMI susceptibility dependent on shielding) |
 
 #### FM-03: Audio Data Staleness
@@ -945,7 +959,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 | **Failure Mechanism** | Driver buffer stall; scheduling priority inversion; DMA descriptor not updated; timestamp rollover |
 | **Effect on NDAS DRIVE AV** | Stale audio data may show siren present when it has passed, or not-present when it has arrived |
 | **Detection Mechanism** | Freshness check (TSR-AIQL-001), alive counter validation (TSR-AIQL-002), sequence counter monotonicity (TSR-AIQL-004); graceful degradation (TSR-AIQL-007) |
-| **Safety Impact** | Delayed yielding response — violation of SG-03 FTTI |
+| **Safety Impact** | Delayed yielding response — violation of SG-EMV-01 FTTI |
 | **Frequency Estimate** | Medium (scheduling issues ~100 FIT; increases under system load) |
 
 #### FM-04: Audio Signal Out-of-Range
@@ -956,7 +970,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 | **Failure Mechanism** | Microphone bias failure; codec gain register corruption; ADC saturation; reference voltage drift |
 | **Effect on NDAS DRIVE AV** | Clipped or offset audio distorts frequency content, leading to classifier errors |
 | **Detection Mechanism** | Range validation (TSR-AIQL-005) — sample amplitude, DC offset, noise floor checks; BIST spectral match detects analog path degradation (TSR-AIQL-016) |
-| **Safety Impact** | Classifier output unreliable — potential SG-03 violation |
+| **Safety Impact** | Classifier output unreliable — potential SG-EMV-01 violation |
 | **Frequency Estimate** | Low (analog fault rate ~50 FIT; codec register corruption ~20 FIT) |
 
 #### FM-05: False Negative (Missed Siren Detection)
@@ -989,7 +1003,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 | **Failure Mechanism** | Multi-threaded driver race condition; DMA descriptor ring corruption; buffer management defect; interrupt priority inversion |
 | **Effect on NDAS DRIVE AV** | Out-of-order frames disrupt temporal tracking of siren presence/absence transitions |
 | **Detection Mechanism** | Sequence counter monotonicity check (TSR-AIQL-004) |
-| **Safety Impact** | Delayed or incorrect siren detection state — potential SG-03 violation |
+| **Safety Impact** | Delayed or incorrect siren detection state — potential SG-EMV-01 violation |
 | **Frequency Estimate** | Low (software defect; ~10 FIT under normal scheduling) |
 
 #### FM-08: Common Cause Failure
@@ -1301,10 +1315,10 @@ FFI analysis ensures that failures in the QM audio subsystem cannot propagate in
 
 ### 8.1 Decomposition Argument
 
-The ASIL B safety integrity for SG-03 is achieved through ASIL decomposition per ISO 26262-9 Clause 5, applied at the boundary between the QM audio subsystem and the ASIL B AIQL.
+The ASIL B safety integrity for SG-EMV-01 is achieved through ASIL decomposition per ISO 26262-9 Clause 5, applied at the boundary between the QM audio subsystem and the ASIL B AIQL.
 
 ```
-Safety Goal SG-03: ASIL B
+Safety Goal SG-EMV-01: ASIL B
     |
     +--- ASIL B (AIQL) — Safety mechanism qualifying audio input + BIST
     |
@@ -1878,7 +1892,7 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 |-----------|-------|
 | **Triggering Condition** | High ambient noise environments (construction zones, heavy traffic, tunnels) mask siren audio below classifier detection threshold |
 | **Functional Insufficiency** | QM siren classifier signal-to-noise ratio insufficient to detect siren in noise levels > 90 dB(A) |
-| **Hazardous Behavior** | Failure to detect approaching emergency vehicle — violates SG-03 |
+| **Hazardous Behavior** | Loss of siren detection reduces NDAS DRIVE AV confidence in EMV classification — slower or missed identification of stationary/slow EMV in front on highway (SG-EMV-01) |
 | **Scenario** | Urban construction zone with jackhammer noise at 100 dB(A); ambulance approaching from 200 m with siren at 123 dB(A) at 1 m (attenuated to ~70 dB(A) at 200 m); siren masked by construction noise |
 | **Risk Reduction** | **System-level mitigation**: Primary sensors (camera, LiDAR, radar) provide independent emergency vehicle detection via flashing lights, vehicle shape, and motion patterns. Audio masking does not affect primary sensor capability. ODD consideration: reduced audio detection range in high-noise environments is documented as a known limitation of the secondary sensor. |
 | **AIQL Response** | AIQL remains in QUALIFIED state — the audio I/O path is functioning correctly (data integrity is intact). The detection limitation is a classifier performance issue, not a data integrity failure. AIQL's range validation (TSR-AIQL-005) may detect if noise causes sustained saturation. |
@@ -1902,7 +1916,7 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 |-----------|-------|
 | **Triggering Condition** | Emergency vehicle approaching at high relative speed causes Doppler shift that moves siren fundamental frequency outside the classifier's trained frequency band |
 | **Functional Insufficiency** | QM siren classifier trained on stationary siren frequency profiles; Doppler-shifted frequencies may fall outside recognition band |
-| **Hazardous Behavior** | Delayed or missed siren detection when emergency vehicle approaches at high closing speed — potential SG-03 violation |
+| **Hazardous Behavior** | Delayed or missed siren detection when emergency vehicle approaches at high closing speed — potential SG-EMV-01 violation |
 | **Scenario** | Emergency vehicle approaching head-on at 120 km/h relative speed; siren fundamental at 1000 Hz shifted to ~1100 Hz; if classifier frequency band is narrowly tuned, shifted frequency may reduce detection confidence |
 | **Risk Reduction** | **System-level mitigation**: Primary sensors (camera, LiDAR, radar) detect emergency vehicles by visual/shape/motion characteristics unaffected by Doppler shift. Classifier AoU should specify Doppler-robust frequency band (siren wail sweeps 500-1600 Hz; Doppler shift at max relative speed is ~10%). SOTIF validation testing with Doppler-shifted audio. |
 | **AIQL Response** | AIQL cannot detect Doppler-related misclassification — this is a classifier performance limitation, not a data integrity failure. Diagnostic logging (TSR-AIQL-011) captures events for post-drive analysis. |
@@ -1952,17 +1966,17 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 
 | Safety Goal | Failure Mode | TSR(s) | Verification |
 |------------|-------------|--------|-------------|
-| SG-03 | FM-01: Complete Loss | TSR-AIQL-001, TSR-AIQL-002, TSR-AIQL-007, TSR-AIQL-016 | FI-01 |
-| SG-03 | FM-02: Corruption | TSR-AIQL-003, TSR-AIQL-005, TSR-AIQL-007 | FI-03 |
-| SG-03 | FM-03: Staleness | TSR-AIQL-001, TSR-AIQL-002, TSR-AIQL-004, TSR-AIQL-007 | FI-01, FI-02 |
-| SG-03 | FM-04: Out-of-Range | TSR-AIQL-005, TSR-AIQL-016 | FI-05 |
-| SG-03 | FM-05: False Negative | — (system-level: NDAS DRIVE AV multi-sensor fusion) | — (system-level verification) |
-| SG-03 | FM-06: False Positive | — (system-level: NDAS DRIVE AV multi-sensor fusion) | — (system-level verification) |
-| SG-03 | FM-07: Sequence Disorder | TSR-AIQL-004 | FI-04 |
-| SG-03 | FM-08: Common Cause | TSR-AIQL-012, TSR-AIQL-013, TSR-AIQL-007 | FI-07 |
-| SG-03 | FM-09: Speaker Failure | TSR-AIQL-015, TSR-AIQL-019, TSR-AIQL-007 | FI-10 |
-| SG-03 | FM-10: Coupling Degradation | TSR-AIQL-016, TSR-AIQL-019, TSR-AIQL-007 | FI-11 |
-| SG-03 | FM-11: BIST False Failure | TSR-AIQL-018, TSR-AIQL-019 | FI-13 |
+| SG-EMV-01 | FM-01: Complete Loss | TSR-AIQL-001, TSR-AIQL-002, TSR-AIQL-007, TSR-AIQL-016 | FI-01 |
+| SG-EMV-01 | FM-02: Corruption | TSR-AIQL-003, TSR-AIQL-005, TSR-AIQL-007 | FI-03 |
+| SG-EMV-01 | FM-03: Staleness | TSR-AIQL-001, TSR-AIQL-002, TSR-AIQL-004, TSR-AIQL-007 | FI-01, FI-02 |
+| SG-EMV-01 | FM-04: Out-of-Range | TSR-AIQL-005, TSR-AIQL-016 | FI-05 |
+| SG-EMV-01 | FM-05: False Negative | — (system-level: NDAS DRIVE AV multi-sensor fusion) | — (system-level verification) |
+| SG-EMV-01 | FM-06: False Positive | — (system-level: NDAS DRIVE AV multi-sensor fusion) | — (system-level verification) |
+| SG-EMV-01 | FM-07: Sequence Disorder | TSR-AIQL-004 | FI-04 |
+| SG-EMV-01 | FM-08: Common Cause | TSR-AIQL-012, TSR-AIQL-013, TSR-AIQL-007 | FI-07 |
+| SG-EMV-01 | FM-09: Speaker Failure | TSR-AIQL-015, TSR-AIQL-019, TSR-AIQL-007 | FI-10 |
+| SG-EMV-01 | FM-10: Coupling Degradation | TSR-AIQL-016, TSR-AIQL-019, TSR-AIQL-007 | FI-11 |
+| SG-EMV-01 | FM-11: BIST False Failure | TSR-AIQL-018, TSR-AIQL-019 | FI-13 |
 
 ### 13.2 TSR → AoU Traceability
 
@@ -2059,7 +2073,7 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | # | Open Item | Owner | Priority | Target Date | Status |
 |---|-----------|-------|----------|-------------|--------|
 | OI-01 | **Audio frame interface specification**: Finalize the exact audio frame format, field ordering, and byte alignment with the audio driver development team. Current Section 4.2 is a draft proposal. | Audio SW Lead + Safety Engineering | High | TBD | Open |
-| OI-02 | **HARA update for SG-03**: HARA-0003 row added (S2/E3/C2 → ASIL B). Requires formal HARA review board approval to baseline the new safety goal. | Safety Manager | High | TBD | Open |
+| OI-02 | **HARA alignment for SG-EMV-01**: ~~HARA-0003 row added (S2/E3/C2 → ASIL B)~~ TSC-001 now aligned to Audio_HARA.xlsx (UC-React-to-EMV), row: "Yield to Activated EMV (Highway), siren+lights, slow/stationary in front" — S3/E2/C3 → ASIL B (v0.7). Remaining: formal HARA review board approval to baseline safety goal SG-EMV-01; confirm HARA ID assignment convention. | Safety Manager | High | TBD | Partially Resolved |
 | OI-03 | **Target compute platform**: Confirm DRIVE AGX Thor (Blackwell) as the target platform for AIQL deployment within Hyperion 10 reference architecture. WCET (TSR-AIQL-009) and MPU/MIG configuration (TSR-AIQL-012) are platform-dependent. Confirm MIG partition allocation for AIQL safety-critical workload. | Platform Architecture | High | TBD | Open |
 | OI-04 | **Microphone array specifications**: ~~Confirm microphone placement (exterior vs. cabin)~~ Microphone placement confirmed as **in-cabin** (v0.4). Remaining: finalize count, model selection, and acoustic specifications for in-cabin placement. AoU-009 updated for in-cabin requirements including BIST coupling. Cabin acoustic characterization needed (see OI-09). | Audio HW Lead | Medium | TBD | Partially Resolved |
 | OI-05 | **Siren classifier output format**: Confirm the classifier output structure (Section 4.2.3) with the audio ML team. The direction-of-arrival field and confidence metric format need alignment. | Audio ML Team | Medium | TBD | Open |

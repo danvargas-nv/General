@@ -484,7 +484,7 @@ if __name__ == '__main__':
     # Paths relative to script location
     script_dir = os.path.dirname(os.path.abspath(__file__))
     md_file = os.path.join(script_dir, 'TSC-001_Audio_Input_Qualification_Layer_v04.md')
-    docx_file = os.path.join(script_dir, 'TSC-001_Audio_Input_Qualification_Layer_v06.docx')
+    docx_file = os.path.join(script_dir, 'TSC-001_Audio_Input_Qualification_Layer_v07.docx')
 
     if not os.path.exists(md_file):
         print(f"ERROR: Markdown file not found: {md_file}")
