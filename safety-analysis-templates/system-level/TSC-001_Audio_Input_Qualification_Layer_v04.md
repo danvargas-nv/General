@@ -10,11 +10,11 @@
 | **Safety Goal** | SG-EMV-01 |
 | **HARA Reference** | Audio_HARA / UC-React-to-EMV — Row: "Yield to Activated EMV (Highway), siren+lights, slow/stationary in front" |
 | **Item** | AMO (Alpamayo) — Audio Input Path (on DRIVE AGX Thor / Hyperion 10) |
-| **Version** | 0.8 |
+| **Version** | 0.9 |
 | **Status** | In Development |
 | **Author** | Safety Engineering |
 | **Created** | 2026-02-22 |
-| **Last Modified** | 2026-02-25 |
+| **Last Modified** | 2026-02-26 |
 | **Classification** | Confidential |
 
 ### Document Traceability
@@ -39,6 +39,7 @@
 | 0.6 | 2026-02-23 | Safety Engineering | Added SysML architecture views: Block Definition Diagram (4.1.1), Internal Block Diagram (4.1.2), Interface Block Definitions (4.2.6), Block/Part Summary Table (4.4), and Data Flow Sequences for nominal processing, startup BIST, and periodic BIST (4.5). |
 | 0.7 | 2026-02-24 | Safety Engineering | Aligned to Audio_HARA.xlsx (UC-React-to-EMV): corrected S/E/C from S2/E3/C2 to S3/E2/C3; updated hazardous event to "collision with EMV slow/stationary in front on highway"; renamed SG-03 to SG-EMV-01; updated safety goal text; added full HARA scenario context table (Section 5.1); updated FTTI justification for highway EMV-in-front scenario; updated SOTIF TC-AUDIO-01 hazardous behavior; partially resolved OI-02; updated HARA references throughout. |
 | 0.8 | 2026-02-25 | Safety Engineering | Corrected architecture framing: AMO (Alpamayo) is the direct on-vehicle consumer of microphone input, not "NDAS DRIVE AV" generically. ASIL B derives from FFI requirements within AMO — QM mic data must be qualified before entering AMO. Replaced "NDAS DRIVE AV" with "AMO" throughout where referring to the direct audio consumer (perception, fusion, sensor processing). Retained "NDAS DRIVE AV" for broader AD stack references (planning, control, Safety Force Field). Updated platform context, boundary diagrams, BDD, data flow diagrams, failure mode effects, TSRs, state machine, FFI analysis, SOTIF, traceability, open items, and glossary. Added AMO glossary entry. |
+| 0.9 | 2026-02-26 | Safety Engineering | Major architecture revision: (1) Exterior microphones replace in-cabin microphones per systems engineering input; (2) AIQL monitor placed on Thor Main (BP SW), receiving audio via A2B, reporting to THOR FSI via SOC_Error/FSI_I2C; (3) Speaker-mic loopback BIST reclassified as optional/customer-dependent (no exterior speakers on Hyperion reference platform); (4) Added passive qualification strategy as primary approach: noise profile monitoring (TSR-AIQL-020), cross-mic plausibility (TSR-AIQL-021), input sanitization (TSR-AIQL-022); (5) Added FM-12 (mic blockage), FM-13 (cross-mic failure); (6) Updated AoU-009 to exterior mic specs, added AoU-013 (A2B frame structure), AoU-014 (mic quantity); (7) Updated BDD, IBD, boundary diagrams for BP/A2B/THOR FSI topology; (8) Reframed SOTIF TC-AUDIO-04/05 for exterior mics; (9) Added FI-15/16/17 for passive check fault injection; (10) Added OI-15 through OI-18 for A2B confirmation, FSI path, mic quantity, NDAS EVD commitment. |
 
 ---
 
@@ -46,9 +47,9 @@
 
 ### 2.1 Scope
 
-This Technical Safety Concept (TSC) defines the **Audio Input Qualification Layer (AIQL)** — an ASIL B software component at the boundary between the QM-rated audio subsystem and the ASIL-rated AMO perception pipeline, running on the DRIVE AGX Thor compute platform within the DRIVE Hyperion 10 reference architecture.
+This Technical Safety Concept (TSC) defines the **Audio Input Qualification Layer (AIQL)** — an ASIL B software component running on **Thor Main (Base Platform SW)** at the boundary between the QM-rated audio subsystem and the ASIL-rated AMO perception pipeline. The AIQL qualifies exterior microphone data received via the **Automotive Audio Bus (A2B)** before it reaches AMO.
 
-**Platform context**: AMO (Alpamayo) is NVIDIA's on-vehicle perception system running on DRIVE AGX Thor within the Hyperion 10 reference architecture. AMO is the **direct consumer of microphone input** — it receives qualified audio from the AIQL and fuses it with camera, LiDAR, radar, and ultrasonic data for autonomous driving perception. The ASIL B requirement on the AIQL derives from Freedom From Interference (FFI) requirements within AMO: QM microphone data must be qualified before entering the ASIL-rated AMO perception pipeline. AMO feeds its perception outputs into the broader NDAS DRIVE AV stack (planning, control, Safety Force Field). Alpamayo also exists as a cloud-based foundation-model research layer (trained on DGX) that produces distilled compact models deployed into AMO on-vehicle, but the system boundary for this TSC is the AMO interface.
+**Platform context**: The AIQL runs on Thor Main as part of the Base Platform (BP) SW. Exterior microphones (QM) connect to the BP board via A2B (up to 16 channels supported on Maarva). The AIQL processes audio frames from the A2B path and outputs qualified audio to AMO (Alpamayo), the on-vehicle perception system. Safety signaling (error reporting, MRM requests) is communicated to **THOR FSI** via SOC_Error / FSI_I2C interfaces. AMO is the **direct consumer of microphone input** — it fuses qualified audio with camera, LiDAR, radar, and ultrasonic data for autonomous driving perception. The ASIL B requirement on the AIQL derives from Freedom From Interference (FFI) requirements within AMO: QM microphone data must be qualified before entering the ASIL-rated AMO perception pipeline. AMO feeds its perception outputs into the broader NDAS DRIVE AV stack (planning, control, Safety Force Field).
 
 Audio is designated as a **secondary safety sensor**. The primary sensors for emergency vehicle detection and all driving decisions are camera, LiDAR, and radar. Audio provides supplementary siren/horn detection that enhances overall detection confidence but is not the sole or primary input for any safety-critical decision. AMO multi-sensor fusion architecture is responsible for combining all sensor inputs and determining the appropriate driving response.
 
@@ -58,16 +59,19 @@ The AIQL qualifies QM audio input at the I/O boundary by implementing safety mec
 
 - Qualification of the audio data stream at the AMO input boundary
 - Freshness, integrity, sequence, and range validation of audio frames
+- Noise profile monitoring and input sanitization
+- Cross-microphone plausibility checking (when multiple mics are available)
 - Safe state definition and graceful degradation strategy
 - Temporal and spatial Freedom From Interference (FFI) mechanisms
 - Fault injection verification campaign for the AIQL
 - ASIL decomposition argument per ISO 26262-9
-- Speaker-Microphone Loopback Built-In Self-Test (BIST) for audio path integrity verification
+- Acoustic loopback via exterior sound source (optional, customer-dependent enhancement)
 
 #### Out of Scope
 
-- Design or modification of the QM audio hardware (microphones, codec, amplifiers)
+- Design or modification of the QM audio hardware (exterior microphones, codec, amplifiers)
 - Design or modification of the QM audio driver or DSP firmware
+- Customer-side audio front-end hardware selection or diagnostics (codec, A2B transceiver)
 - The siren/horn classifier algorithm itself (treated as QM element with AoUs)
 - Classifier correctness validation (semantic accuracy of siren/horn detection is a system-level concern addressed by AMO multi-sensor fusion with primary sensors)
 - Cross-modal plausibility checking with camera or other sensors (sensor fusion is AMO's responsibility)
@@ -75,42 +79,56 @@ The AIQL qualifies QM audio input at the I/O boundary by implementing safety mec
 - Alpamayo foundation model training, distillation, or cloud infrastructure
 - Non-safety audio functions (in-cabin entertainment, voice commands)
 - Cybersecurity requirements for the audio path (addressed in separate cybersecurity concept)
+- Customer-specific exterior speaker availability or acoustic loopback implementation (defined as optional enhancement)
 
 ### 2.2 Purpose
 
-AMO (Alpamayo) — the on-vehicle perception system running on DRIVE AGX Thor within the Hyperion 10 reference architecture — directly consumes microphone input for siren/horn detection that influences safety-critical driving decisions, specifically yielding to emergency vehicles. AMO's perception outputs feed into the broader NDAS DRIVE AV stack for planning and control. The audio hardware and software (microphone, codec, DSP, driver, classifier) are developed to QM (Quality Management) level.
+AMO (Alpamayo) — the on-vehicle perception system running on DRIVE AGX Thor within the Hyperion 10 reference architecture — directly consumes exterior microphone input for siren/horn detection that influences safety-critical driving decisions, specifically yielding to emergency vehicles. AMO's perception outputs feed into the broader NDAS DRIVE AV stack for planning and control. The audio hardware and software (exterior microphones, codec, A2B transceiver, DSP, driver, classifier) are developed to QM (Quality Management) level.
 
 Without qualification, unqualified audio input creates Freedom From Interference (FFI) issues within AMO. Specifically:
 
 1. **Corrupted audio data** could inject erroneous siren/horn signals into AMO's fusion layer, degrading fusion confidence
 2. **Missing or stale audio data** could cause AMO to operate with outdated supplementary information without awareness of its invalidity
+3. **Grossly off signals** (blocked microphone, environmental damage, wiring fault) could degrade AMO perception without detection
 
-The AIQL resolves these FFI issues by implementing ASIL B safety mechanisms at the I/O boundary, qualifying the QM audio input before it enters the AMO perception pipeline. The AIQL ensures that audio data entering AMO is fresh, intact, and within expected ranges — or explicitly marked as not qualified so the fusion layer can exclude it. This avoids the prohibitively expensive alternative of developing the entire audio hardware and software stack to ASIL B.
+The AIQL resolves these FFI issues by implementing ASIL B safety mechanisms on Thor Main (BP SW) at the I/O boundary, qualifying the QM audio input received via A2B before it enters the AMO perception pipeline. The AIQL ensures that audio data entering AMO is fresh, intact, and within expected ranges — or explicitly marked as not qualified so the fusion layer can exclude it. This avoids the prohibitively expensive alternative of developing the entire audio hardware and software stack to ASIL B.
 
-Additionally, the AIQL incorporates a **Speaker-Microphone Loopback Built-In Self-Test (BIST)** — a pre-processing integrity verification mechanism. The BIST uses in-cabin speakers to play a known sine sweep signal that is picked up by the in-cabin microphones, allowing the AIQL to validate the complete acoustic-to-digital audio path before and during operation. On confirmed BIST failure, the vehicle initiates a Minimal Risk Maneuver (MRM) — a controlled stop — because BIST failure indicates a fundamental loss of audio path integrity that cannot be recovered through software-only mechanisms.
+The AIQL implements a **layered passive qualification strategy** that does not depend on customer-side audio hardware capabilities:
+
+1. **Noise profile monitoring**: Verify that incoming audio has characteristics consistent with a functioning exterior microphone (ambient noise present, no DC rail, no persistent saturation)
+2. **Cross-microphone plausibility**: Compare channels across the mic array; flag any channel that deviates significantly from its peers (requires minimum 2 microphones)
+3. **Input sanitization**: Verify amplitude range, noise floor, absence of persistent clipping or DC offset before forwarding to AMO
+4. **Data integrity checks**: Freshness, alive counter, CRC, sequence counter, and range validation on every A2B frame
+5. **Acoustic loopback** (optional, customer-dependent): If an exterior sound source is available on the vehicle (e.g., backup warning speaker, pedestrian alerting speaker), the AIQL can execute a coded chirp stimulus and verify the received signal against a reference profile for end-to-end acoustic path verification
 
 **Note**: Classifier correctness (whether the siren/horn classifier accurately identifies emergency vehicle audio) is a system-level concern. Because audio is a secondary sensor, misclassification is mitigated by AMO multi-sensor fusion with primary sensors (camera, LiDAR, radar), not by the AIQL.
 
 ### 2.3 Boundary Definition
 
 ```
-                    QM Boundary                          ASIL B Boundary
-                    |                                    |
-  [In-Cabin   ] --> [Codec] --> [Audio Driver] --> [AIQL] --> [AMO (Alpamayo)]
-  [Microphones]     |(ADC+DSP)|   (QM SW)          (ASILB)   (ASIL, on Thor)
-                    |                                    |
-     QM HW          QM SW        QM SW          ASIL B SW    ASIL (AMO)
+                 Customer Side (QM)                  NVIDIA BP (ASIL B)        NVIDIA (ASIL)
+                 |                                   |                         |
+  [Exterior  ] ---> [Codec] ---> [A2B Bus] -------> [AIQL Monitor] --------> [AMO]
+  [Microphones]     |(ADC)  |                        (Thor Main,              (Alpamayo)
+                    |                                 BP SW)                   |
+     QM HW          QM HW        QM Bus        ASIL B SW               ASIL (perception)
+                                                     |
+                                                     | safety signaling
+                                                     v
+                                                [THOR FSI]
+                                                (SOC_Error / FSI_I2C)
 
-  [In-Cabin   ] <-- [Codec] <-- [BIST Signal  ] <-+
-  [Speakers   ]     |(DAC)  |   | Generator    |   |
-                    |           | (within AIQL)|   |
-     QM HW          QM HW       ASIL B SW         |
-                                                   |
-                    Loopback: Speaker output -------> Microphone input
-                              (verified by AIQL spectral match)
+  Optional (customer-dependent):
+  [Exterior   ] <-- [Codec] <-- [Acoustic Loopback ] <-+
+  [Speaker    ]     |(DAC)  |   | Stimulus (AIQL)   |   |
+  (backup/AVAS)                                         |
+     QM HW          QM HW       ASIL B SW              |
+                                                        |
+                    Loopback: Speaker output ---------> Microphone input
+                              (verified by AIQL correlation match)
 ```
 
-The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-rated AMO perception pipeline. All audio data entering AMO passes through the AIQL — there is no bypass path.
+The AIQL sits on Thor Main (BP SW) at the exact boundary between the QM audio subsystem (A2B input) and the ASIL-rated AMO perception pipeline. All audio data entering AMO passes through the AIQL — there is no bypass path. The A2B bus and AIQL are both on the Base Platform board, confirming the data path is accessible to BP SW.
 
 ---
 
@@ -147,128 +165,136 @@ The AIQL sits at the exact boundary between the QM audio subsystem and the ASIL-
 ### 4.1 Audio Input Path — Data Flow
 
 ```
-+==============+     +============+     +=============+     +======+     +==========+
-|  In-Cabin    |---->|   Codec    |---->| Audio Driver|---->| AIQL |---->|   AMO    |
-|  Microphone  |     | (ADC+DSP)  |     |  (QM SW)    |     |(ASILB)|    |(Alpamayo)|
-|  Array       |     +============+     +=============+     +======+     +==========+
-+==============+          |                   |               |   |           |
-    ^ |                   |                   |               |   |           |
-    | | Analog audio      | Digital PCM       | Audio frame   |   | Qualified |
-    | | (electrical)      | (I2S/TDM)         | (shared mem)  |   | audio     |
-    | |                   |                   |               |   | frame +   |
-    | |                   |                   |               |   | status    |
-    | |                   |                   |               |   |           |
-    | +--- QM HW ---------+---- QM SW --------+               |   |           |
-    |                                                          |   |           |
-    |   BIST Loopback Path (speaker -> acoustic -> mic)        |   |           |
-    |                                                          |   |           |
-    +<-- [Codec (DAC)] <-- [In-Cabin Speakers] <---------------+   |           |
-         QM HW              QM HW            BIST Signal Gen       |           |
-                                             (within AIQL)         |           |
-                                                                   |           |
-              +====================================================+           |
-              | AIQL Internal Architecture                         |           |
-              |                                                    |           |
-              | +-------------+  +---------------+  +------------+ |           |
-              | | Freshness & |  | Integrity &   |  | BIST       | |           |
-              | | Alive Check |  | Range Check   |  | Loopback   | |           |
-              | |             |  |               |  | Module     | |           |
-              | | - Timestamp |  | - CRC-32      |  |            | |           |
-              | | - Alive Ctr |  | - Seq Counter |  | - Signal   | |           |
-              | | - Freshness |  | - Range Valid |  |   Generator| |           |
-              | +------+------+  +-------+-------+  | - Spectral | |           |
-              |        |                 |           |   Match    | |           |
-              |        |                 |           | - Pass/Fail| |           |
-              |        |                 |           +------+-----+ |           |
-              |        v                 v                  v       |           |
-              | +---------------------------------------------------+          |
-              | | Qualification Decision & State Machine              |          |
-              | |                                                    |          |
-              | | QUALIFIED ---> DEGRADED ---> NOT_QUALIFIED         |          |
-              | |                                 |                  |          |
-              | |                                 +--> MRM_REQUESTED |          |
-              | +---------------------------------------------------+          |
-              |                                                    |           |
-              +====================================================+           |
-                                                                   |           |
-                      +--------------------------------------------+           |
-                      | Output: qualified_audio_frame + qualification_status   |
-                      +--------------------------------------------------------+
+  Customer Side (QM)                           NVIDIA Base Platform
+  ==================                           ====================
+
++==============+     +============+     +=========+     +====================+
+|  Exterior    |---->|   Codec    |---->| A2B Bus |---->| Thor Main SoC      |
+|  Microphone  |     | (ADC)      |     |         |     |                    |
+|  Array       |     +============+     +=========+     |  +==============+  |
++==============+          |                   |         |  | AIQL Monitor |  |
+                          |                   |         |  | (ASIL B,     |  |
+   Analog audio      Digital audio       A2B frames     |  |  BP SW)      |  |
+   (electrical)      (to A2B)            (digital)      |  +======+=======+  |
+                          |                   |         |         |          |
+   +--- QM HW -----------+---- QM HW --------+         |         |          |
+                                                        |    +----+-----+    |
+                                                        |    |          |    |
+                                                        |    v          v    |
+                                                        | [AMO]   [THOR FSI]|
+                                                        | (ASIL)  (safety   |
+                                                        |          mgmt)    |
+                                                        +====================+
+
+              +====================================================+
+              | AIQL Internal Architecture (Thor Main, BP SW)      |
+              |                                                    |
+              | +-------------+  +---------------+  +------------+ |
+              | | Freshness & |  | Integrity &   |  | Noise      | |
+              | | Alive Check |  | Range Check   |  | Profile &  | |
+              | |             |  |               |  | Plausibil. | |
+              | | - Timestamp |  | - CRC-32      |  |            | |
+              | | - Alive Ctr |  | - Seq Counter |  | - Noise    | |
+              | | - Freshness |  | - Range Valid |  |   Floor    | |
+              | +------+------+  +-------+-------+  | - Cross-Mic| |
+              |        |                 |           | - Sanitize | |
+              |        |                 |           +------+-----+ |
+              |        v                 v                  v       |
+              | +---------------------------------------------------+
+              | | Qualification Decision & State Machine              |
+              | |                                                    |
+              | | QUALIFIED ---> DEGRADED ---> NOT_QUALIFIED         |
+              | |                                 |                  |
+              | |                                 +--> MRM_REQUESTED |
+              | +---------------------------------------------------+
+              |        |                                   |        |
+              |        v                                   v        |
+              |  qualified_audio_frame              safety status   |
+              |  + qualification_status             to THOR FSI     |
+              |  to AMO                             (SOC_Error)     |
+              +====================================================+
+
+  Optional (customer-dependent):
+  +==============+     +============+
+  |  Exterior    |<----|   Codec    |<---- Acoustic Loopback Stimulus
+  |  Speaker     |     | (DAC)      |      (from AIQL, if speaker available)
+  |  (QM HW)    |     +============+
+  +==============+
+        |
+        +-- acoustic coupling --> Exterior Microphone(s)
+                                  (verified by AIQL correlation match)
 ```
 
 #### 4.1.1 System Context — Block Definition Diagram (SysML BDD)
 
-The following diagram defines the block hierarchy and associations for the AIQL within the DRIVE AGX Thor platform. Map each box to a SysML `«block»` with the indicated stereotype and ASIL classification.
+The following diagram defines the block hierarchy and associations for the AIQL within the Base Platform on DRIVE AGX Thor. Map each box to a SysML `«block»` with the indicated stereotype and ASIL classification.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │ «block» DRIVE_AGX_Thor_Platform                                    Hyperion 10  │
 │                                                                                  │
 │  ┌───────────────────────────────────────────────────────────────────────────┐   │
-│  │                           QM Boundary                                     │   │
+│  │                  Customer Side — QM Boundary                              │   │
 │  │                                                                           │   │
 │  │  ┌──────────────┐     ┌──────────────┐     ┌──────────────────────────┐  │   │
 │  │  │ «block»      │     │ «block»      │     │ «block»                  │  │   │
-│  │  │ InCabinMic   │     │ AudioCodec   │     │ AudioDriver              │  │   │
+│  │  │ ExteriorMic  │     │ AudioCodec   │     │ A2B_Transceiver          │  │   │
 │  │  │ Array        │     │              │     │                          │  │   │
 │  │  │──────────────│     │──────────────│     │──────────────────────────│  │   │
-│  │  │ «QM HW»     │     │ «QM HW»     │     │ «QM SW»                 │  │   │
+│  │  │ «QM HW»     │     │ «QM HW»     │     │ «QM HW»                 │  │   │
 │  │  │ ASIL: QM    │     │ ASIL: QM    │     │ ASIL: QM               │  │   │
 │  │  │──────────────│     │──────────────│     │──────────────────────────│  │   │
-│  │  │ numChannels  │     │ adcMode:     │     │ frameRate: 20 Hz        │  │   │
-│  │  │  : uint8 = 4│     │  I2S/TDM    │     │ sharedMemAddr: ptr      │  │   │
-│  │  │ sampleRate:  │     │ sampleBits:  │     │ dmaChannel: uint8      │  │   │
-│  │  │  48000 Hz   │     │  16         │     │──────────────────────────│  │   │
-│  │  │ freqRange:   │     │ dacMode:     │     │ +packFrame()            │  │   │
-│  │  │  20-20kHz   │     │  PCM        │     │ +writeCRC32()           │  │   │
-│  │  └──────┬───────┘     │──────────────│     │ +incrAliveCounter()    │  │   │
-│  │         │ analog      │ +adcConvert()│     └────────────┬───────────┘  │   │
-│  │         │ audio       │ +dacConvert()│                  │              │   │
-│  │         ▼             └──┬──────┬────┘                  │              │   │
-│  │         ├────────────────┘      ▲                       │              │   │
-│  │         │  I2S/TDM              │ DAC PCM               │              │   │
-│  │         │                       │                       │              │   │
-│  │  ┌──────┴───────┐              │                       │              │   │
-│  │  │ «block»      │              │                       │              │   │
-│  │  │ SirenHorn    │              │                       │              │   │
-│  │  │ Classifier   │              │                       │              │   │
-│  │  │──────────────│              │                       │              │   │
-│  │  │ «QM SW»     │              │                       │              │   │
-│  │  │ ASIL: QM    │              │                       │              │   │
-│  │  │──────────────│              │                       │              │   │
-│  │  │ +classify()  │              │                       │              │   │
-│  │  │  siren_p     │              │                       │              │   │
-│  │  │  horn_p      │              │                       │              │   │
-│  │  │  direction   │              │                       │              │   │
-│  │  │  confidence  │              │                       │              │   │
-│  │  └──────────────┘              │                       │              │   │
-│  │                                │                       │              │   │
-│  │  ┌──────────────┐              │                       │              │   │
-│  │  │ «block»      │◄─────────────┘                       │              │   │
-│  │  │ InCabinSpkr  │  BIST DAC out                        │              │   │
+│  │  │ numChannels  │     │ adcMode:     │     │ maxChannels: 16         │  │   │
+│  │  │  : TBD      │     │  vendor-     │     │ busType: A2B            │  │   │
+│  │  │ sampleRate:  │     │  specific   │     │ frameRate: 20 Hz        │  │   │
+│  │  │  48000 Hz   │     │ sampleBits:  │     │──────────────────────────│  │   │
+│  │  │ freqRange:   │     │  16         │     │ +packFrame()            │  │   │
+│  │  │  20-20kHz   │     │──────────────│     │ +writeCRC32()           │  │   │
+│  │  │ placement:   │     │ +adcConvert()│     │ +incrAliveCounter()    │  │   │
+│  │  │  exterior   │     └──────┬───────┘     └────────────┬───────────┘  │   │
+│  │  └──────┬───────┘            │                          │              │   │
+│  │         │ analog             │ digital                  │ A2B frames   │   │
+│  │         │ audio              │ audio                    │              │   │
+│  │         ▼                    ▼                          │              │   │
+│  │         ├────────────────────┘                          │              │   │
+│  │         │                                               │              │   │
+│  │  ┌──────┴───────┐                                      │              │   │
+│  │  │ «block»      │                                      │              │   │
+│  │  │ SirenHorn    │                                      │              │   │
+│  │  │ Classifier   │                                      │              │   │
 │  │  │──────────────│                                      │              │   │
-│  │  │ «QM HW»     │                                      │              │   │
+│  │  │ «QM SW»     │                                      │              │   │
 │  │  │ ASIL: QM    │                                      │              │   │
 │  │  │──────────────│                                      │              │   │
-│  │  │ freqResp:    │                                      │              │   │
-│  │  │  500-3000 Hz│                                      │              │   │
-│  │  │ splAtMic:    │                                      │              │   │
-│  │  │  >= 70 dB   │                                      │              │   │
+│  │  │ +classify()  │                                      │              │   │
+│  │  │  siren_p     │                                      │              │   │
+│  │  │  horn_p      │                                      │              │   │
+│  │  │  direction   │                                      │              │   │
+│  │  │  confidence  │                                      │              │   │
+│  │  └──────────────┘                                      │              │   │
+│  │                                                        │              │   │
+│  │  ┌──────────────┐  (optional, customer-dependent)      │              │   │
+│  │  │ «block»      │                                      │              │   │
+│  │  │ ExteriorSpkr │  Acoustic loopback source            │              │   │
+│  │  │──────────────│  (backup warning, AVAS, etc.)        │              │   │
+│  │  │ «QM HW»     │                                      │              │   │
+│  │  │ ASIL: QM    │                                      │              │   │
 │  │  └──────────────┘                                      │              │   │
 │  └────────────────────────────────────────────────────────┼──────────────┘   │
 │                                                           │                  │
-│                                                           │ rawAudioFrame    │
+│                                                           │ A2B audioFrame   │
 │                                         ┌─────────────────┼──────────────┐   │
 │  ┌───────────────────┐                  │ ASIL B Boundary  │              │   │
-│  │ «block»           │                  │                  ▼              │   │
-│  │ VehicleSafety     │◄──mrmRequest─────│  ┌─────────────────────────┐  │   │
-│  │ Manager           │                  │  │ «block»                 │  │   │
+│  │ «block»           │                  │ (Thor Main,      ▼              │   │
+│  │ THOR_FSI          │◄──safetyStatus───│  BP SW)                        │   │
+│  │───────────────────│  (SOC_Error /    │  ┌─────────────────────────┐  │   │
+│  │ «ASIL D»         │   FSI_I2C)       │  │ «block»                 │  │   │
 │  │───────────────────│                  │  │ AIQL                    │  │   │
-│  │ «ASIL D»         │                  │  │─────────────────────────│  │   │
-│  │───────────────────│                  │  │ «ASIL B SW»            │  │   │
-│  │ +initiateMRM()    │                  │  │─────────────────────────│  │   │
-│  │ +controlledStop() │                  │  │ (see IBD in 4.1.2)     │  │   │
-│  └───────────────────┘                  │  └────────────┬────────────┘  │   │
+│  │ +monitorWatchdog()│                  │  │─────────────────────────│  │   │
+│  │ +handleMRM()      │                  │  │ «ASIL B SW»            │  │   │
+│  │ +reportSOC_Error()│                  │  │─────────────────────────│  │   │
+│  └───────────────────┘                  │  │ (see IBD in 4.1.2)     │  │   │
+│                                         │  └────────────┬────────────┘  │   │
 │                                         │               │               │   │
 │                                         └───────────────┼───────────────┘   │
 │                                                         │                    │
@@ -302,10 +328,10 @@ The following diagram defines the internal parts, connectors, and item flows wit
 │ ibd [block] AIQL                                                          ASIL B      │
 │                                                                                        │
 │  PORTS (SysML FlowPorts):                                                             │
-│    pIn_rawFrame     : in  RawAudioFrame       (from AudioDriver, shared mem)          │
-│    pOut_qualFrame   : out QualifiedAudioFrame  (to AMO)                     │
-│    pOut_bistSignal  : out BISTSignal           (to Codec DAC -> Speakers)             │
-│    pOut_mrmRequest  : out MRMRequest           (to Vehicle Safety Manager)            │
+│    pIn_rawFrame     : in  RawAudioFrame       (from A2B, via Thor Main)              │
+│    pOut_qualFrame   : out QualifiedAudioFrame  (to AMO)                               │
+│    pOut_safetyStatus: out SafetyStatus         (to THOR FSI, via SOC_Error/FSI_I2C)  │
+│    pOut_bistSignal  : out BISTSignal           (optional: to Codec DAC -> Speaker)    │
 │    pOut_diagLog     : out DiagnosticEvent      (to NV storage)                        │
 │                                                                                        │
 │  ┌──────────────────────────────────────────────────────────────────────────────────┐  │
@@ -441,62 +467,67 @@ The following diagram defines the internal parts, connectors, and item flows wit
 │  │           pOut_qualFrame ──────────────────────> (to AMO)   │  │
 │  │                                                                       │  │
 │  │  ═════════════════════════════════════════════════════════════════     │  │
-│  │  BIST Subsystem                                                       │  │
+│  │  Noise Profile & Plausibility Subsystem (Primary Diagnostic)          │  │
 │  │  ═════════════════════════════════════════════════════════════════     │  │
 │  │                                                                       │  │
 │  │  ┌────────────────────────────────────────────────────────────────┐   │  │
-│  │  │ «part» bistModule                                              │   │  │
-│  │  │ (Speaker-Microphone Loopback BIST)                             │   │  │
+│  │  │ «part» passiveMonitor                                          │   │  │
+│  │  │ (Passive Qualification Checks)                                 │   │  │
 │  │  │────────────────────────────────────────────────────────────────│   │  │
 │  │  │                                                                │   │  │
-│  │  │  ┌──────────────────┐     ┌──────────────────────────────────┐│   │  │
-│  │  │  │ «part»           │     │ «part»                           ││   │  │
-│  │  │  │ signalGenerator  │     │ spectralMatchVerifier            ││   │  │
-│  │  │  │                  │     │                                  ││   │  │
-│  │  │  │ sineSweep:       │     │ algorithm:                      ││   │  │
-│  │  │  │  500-3000 Hz     │     │  1. FFT of captured mic signal  ││   │  │
-│  │  │  │  logarithmic     │     │  2. FFT of known reference      ││   │  │
-│  │  │  │ amplitude:       │     │  3. Normalized cross-corr       ││   │  │
-│  │  │  │  -20 dBFS        │     │     >= 0.85 threshold           ││   │  │
-│  │  │  │ THD: < 1%        │     │  4. 1/3-octave band amplitude  ││   │  │
-│  │  │  │ freqAccuracy:    │     │     +/- 6 dB tolerance         ││   │  │
-│  │  │  │  +/- 2%          │     │                                  ││   │  │
-│  │  │  │                  │     │ out: correlation, bandAmpl[],    ││   │  │
-│  │  │  │ startup: 2000 ms │     │      PASS/FAIL                  ││   │  │
-│  │  │  │ periodic: 200 ms │     └──────────────┬───────────────────┘│   │  │
-│  │  │  │                  │                    │                    │   │  │
-│  │  │  │ out: bist_       │                    │                    │   │  │
-│  │  │  │  samples[]       │                    │                    │   │  │
-│  │  │  └────────┬─────────┘                    │                    │   │  │
-│  │  │           │                              │                    │   │  │
-│  │  │           │                  ┌───────────▼──────────────────┐ │   │  │
-│  │  │           │                  │ «part»                       │ │   │  │
-│  │  │           │                  │ signalCanceller              │ │   │  │
-│  │  │           │                  │                              │ │   │  │
-│  │  │           │                  │ Subtracts known BIST signal  │ │   │  │
-│  │  │           │                  │ from audio during periodic   │ │   │  │
-│  │  │           │                  │ BIST window                  │ │   │  │
-│  │  │           │                  │                              │ │   │  │
-│  │  │           │                  │ attenuation: >= 30 dB        │ │   │  │
-│  │  │           │                  │ -> cleaned audio to          │ │   │  │
-│  │  │           │                  │    outputAssembler           │ │   │  │
-│  │  │           │                  └──────────────────────────────┘ │   │  │
-│  │  │           │                                                   │   │  │
-│  │  │           │                  ┌──────────────────────────────┐ │   │  │
-│  │  │           │                  │ «part»                       │ │   │  │
-│  │  │           │                  │ bistRetryController          │ │   │  │
-│  │  │           │                  │                              │ │   │  │
-│  │  │           │                  │ startup: 3 retries max       │ │   │  │
-│  │  │           │                  │ periodic: 2 retries max      │ │   │  │
-│  │  │           │                  │ interval: 60 s periodic      │ │   │  │
-│  │  │           │                  │                              │ │   │  │
-│  │  │           │                  │ out: passFailResult,         │ │   │  │
-│  │  │           │                  │   retriesExhausted           │ │   │  │
-│  │  │           │                  │   -> qualificationDecision   │ │   │  │
-│  │  │           │                  └──────────────────────────────┘ │   │  │
-│  │  │           │                                                   │   │  │
-│  │  │  pOut_bistSignal ────────────────────> (to Codec DAC          │   │  │
-│  │  │                                         -> Speakers)          │   │  │
+│  │  │  ┌──────────────────────┐   ┌──────────────────────────────┐  │   │  │
+│  │  │  │ «part»               │   │ «part»                       │  │   │  │
+│  │  │  │ noiseProfileCheck    │   │ crossMicPlausibility         │  │   │  │
+│  │  │  │                      │   │                              │  │   │  │
+│  │  │  │ Per-channel checks:  │   │ Multi-channel comparison:   │  │   │  │
+│  │  │  │  silence: RMS < 10  │   │  RMS & spectral across all  │  │   │  │
+│  │  │  │  DC rail: mean near │   │  exterior mic channels      │  │   │  │
+│  │  │  │   +/- rail          │   │  threshold: X dB from       │  │   │  │
+│  │  │  │  persistent sat:    │   │   median (default: 12 dB)   │  │   │  │
+│  │  │  │   >5% clipped 3+   │   │  requires: >= 2 mics        │  │   │  │
+│  │  │  │   frames            │   │                              │  │   │  │
+│  │  │  │  spectral anomaly   │   │ out: per-channel PASS/FAIL  │  │   │  │
+│  │  │  │                      │   │      + FF_CROSSMIC           │  │   │  │
+│  │  │  │ out: per-channel     │   └──────────────┬───────────────┘  │   │  │
+│  │  │  │  PASS/FAIL +         │                  │                  │   │  │
+│  │  │  │  FF_NOISE_PROFILE    │                  │                  │   │  │
+│  │  │  └──────────┬───────────┘                  │                  │   │  │
+│  │  │             │           ┌───────────────────┘                  │   │  │
+│  │  │             │           │                                      │   │  │
+│  │  │             │           v                                      │   │  │
+│  │  │             │  ┌──────────────────────────────┐                │   │  │
+│  │  │             │  │ «part»                       │                │   │  │
+│  │  │             │  │ inputSanitizer               │                │   │  │
+│  │  │             │  │                              │                │   │  │
+│  │  │             └─>│ Final safety gate before AMO │                │   │  │
+│  │  │                │  amplitude, noise floor,     │                │   │  │
+│  │  │                │  clipping, DC offset checks  │                │   │  │
+│  │  │                │                              │                │   │  │
+│  │  │                │ action: zero-fill + flag     │                │   │  │
+│  │  │                │ non-conforming frames        │                │   │  │
+│  │  │                │                              │                │   │  │
+│  │  │                │ out: sanitized result        │                │   │  │
+│  │  │                │   -> qualificationDecision   │                │   │  │
+│  │  │                └──────────────────────────────┘                │   │  │
+│  │  │                                                                │   │  │
+│  │  └────────────────────────────────────────────────────────────────┘   │  │
+│  │                                                                       │  │
+│  │  ═════════════════════════════════════════════════════════════════     │  │
+│  │  BIST Subsystem (Optional, Customer-Dependent)                        │  │
+│  │  ═════════════════════════════════════════════════════════════════     │  │
+│  │  Active only when an exterior speaker is available on the vehicle.    │  │
+│  │  If no speaker (Hyperion reference), BIST is disabled and passive     │  │
+│  │  monitoring above serves as the sole diagnostic approach.             │  │
+│  │                                                                       │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐   │  │
+│  │  │ «part» bistModule (optional)                                   │   │  │
+│  │  │ (Speaker-Microphone Loopback BIST)                             │   │  │
+│  │  │────────────────────────────────────────────────────────────────│   │  │
+│  │  │  signalGenerator ──> spectralMatchVerifier ──> bistRetryCtrl  │   │  │
+│  │  │  See Appendix E for full BIST architecture details.            │   │  │
+│  │  │                                                                │   │  │
+│  │  │  pOut_bistSignal ──────> (to Codec DAC -> Exterior Speaker)   │   │  │
+│  │  │  out: passFailResult ──> qualificationDecision                │   │  │
 │  │  └───────────────────────────────────────────────────────────────┘   │  │
 │  │                                                                       │  │
 │  │  ┌────────────────────────────────────────────────────────────────┐   │  │
@@ -563,12 +594,16 @@ The following diagram defines the internal parts, connectors, and item flows wit
 | 4 | `FF_RANGE` | Signal range validation failed |
 | 5 | `FF_TIMEOUT` | Frame reception timeout |
 | 6 | `FF_OVERFLOW` | Input buffer overflow detected |
-| 7 | `FF_BIST_FAIL` | BIST loopback verification failed |
-| 8 | `FF_BIST_SPEAKER` | BIST speaker subsystem failure (no output) |
-| 9 | `FF_BIST_COUPLING` | BIST acoustic coupling degradation |
-| 10-15 | Reserved | Reserved for future use |
+| 7 | `FF_BIST_FAIL` | BIST loopback verification failed (optional, customer-dependent) |
+| 8 | `FF_BIST_SPEAKER` | BIST speaker subsystem failure (optional, customer-dependent) |
+| 9 | `FF_BIST_COUPLING` | BIST acoustic coupling degradation (optional, customer-dependent) |
+| 10 | `FF_NOISE_PROFILE` | Noise profile anomaly detected (silence, DC rail, saturation, abnormal spectrum) |
+| 11 | `FF_CROSSMIC` | Cross-microphone plausibility failure (channel divergence) |
+| 12-15 | Reserved | Reserved for future use |
 
-#### 4.2.5 BIST Output Interface: AIQL → Speaker (via Codec DAC)
+#### 4.2.5 Acoustic Loopback Output Interface (Optional, Customer-Dependent): AIQL → Speaker (via Codec DAC)
+
+**Note**: This interface is only active when an exterior speaker (e.g., backup warning speaker, AVAS/pedestrian alerting speaker) is available on the vehicle platform. If no exterior speaker is present, this interface is inactive and all BIST-related functionality is disabled. See Section 7 (TSR-AIQL-015 through TSR-AIQL-018) for optional BIST TSRs.
 
 | Field | Type | Size (bytes) | Description |
 |-------|------|-------------|-------------|
@@ -601,25 +636,43 @@ The following interface blocks define the typed flows for all AIQL FlowPorts. Ea
 
 «interfaceBlock» ClassifierOutput             «interfaceBlock» BISTSignal
 ┌──────────────────────────────────┐          ┌─────────────────────────────────────┐
-│ siren_probability : float32      │          │ bist_sequence_id : uint16           │
-│ horn_probability  : float32      │          │ signal_type      : enum8            │
-│ direction_deg     : float32      │          │   {SINE_SWEEP=0x01,                 │
-│ confidence        : float32      │          │    SINGLE_TONE=0x02}                │
-└──────────────────────────────────┘          │ start_freq_hz    : uint16 = 500     │
-                                              │ end_freq_hz      : uint16 = 3000    │
-«interfaceBlock» FailureFlags                 │ amplitude_dbfs   : int8   = -20     │
-┌──────────────────────────────────┐          │ duration_ms      : uint16           │
-│ bit 0 : FF_FRESHNESS             │          │ bist_samples     : int16[]          │
-│ bit 1 : FF_ALIVE                 │          └─────────────────────────────────────┘
-│ bit 2 : FF_CRC                   │
-│ bit 3 : FF_SEQUENCE              │          «interfaceBlock» MRMRequest
-│ bit 4 : FF_RANGE                 │          ┌─────────────────────────────────────┐
-│ bit 5 : FF_TIMEOUT               │          │ request_type  : enum8               │
-│ bit 6 : FF_OVERFLOW              │          │   {BIST_STARTUP_FAIL,               │
-│ bit 7 : FF_BIST_FAIL             │          │    BIST_PERIODIC_FAIL}              │
-│ bit 8 : FF_BIST_SPEAKER          │          │ failure_detail : uint16             │
-│ bit 9 : FF_BIST_COUPLING         │          │ timestamp_us   : uint64             │
-│ bit 10-15 : reserved             │          └─────────────────────────────────────┘
+│ siren_probability : float32      │          │ (Optional, customer-dependent —     │
+│ horn_probability  : float32      │          │  active only when exterior speaker  │
+│ direction_deg     : float32      │          │  is available on the platform)      │
+│ confidence        : float32      │          │                                     │
+└──────────────────────────────────┘          │ bist_sequence_id : uint16           │
+                                              │ signal_type      : enum8            │
+«interfaceBlock» FailureFlags                 │   {SINE_SWEEP=0x01,                 │
+┌──────────────────────────────────┐          │    SINGLE_TONE=0x02}                │
+│ bit 0 : FF_FRESHNESS             │          │ start_freq_hz    : uint16 = 500     │
+│ bit 1 : FF_ALIVE                 │          │ end_freq_hz      : uint16 = 3000    │
+│ bit 2 : FF_CRC                   │          │ amplitude_dbfs   : int8   = -20     │
+│ bit 3 : FF_SEQUENCE              │          │ duration_ms      : uint16           │
+│ bit 4 : FF_RANGE                 │          │ bist_samples     : int16[]          │
+│ bit 5 : FF_TIMEOUT               │          └─────────────────────────────────────┘
+│ bit 6 : FF_OVERFLOW              │
+│ bit 7 : FF_BIST_FAIL             │          «interfaceBlock» MRMRequest
+│   (optional, customer-dependent) │          ┌─────────────────────────────────────┐
+│ bit 8 : FF_BIST_SPEAKER          │          │ request_type  : enum8               │
+│   (optional, customer-dependent) │          │   {BIST_STARTUP_FAIL,               │
+│ bit 9 : FF_BIST_COUPLING         │          │    BIST_PERIODIC_FAIL,              │
+│   (optional, customer-dependent) │          │    PERSISTENT_QUAL_FAIL}            │
+│ bit 10 : FF_NOISE_PROFILE        │          │ failure_detail : uint16             │
+│ bit 11 : FF_CROSSMIC             │          │ timestamp_us   : uint64             │
+│ bit 12-15 : reserved             │          └─────────────────────────────────────┘
+└──────────────────────────────────┘
+
+«interfaceBlock» NoiseProfileResult
+┌──────────────────────────────────┐
+│ channel_id      : uint8          │
+│ rms_level       : float32        │
+│ dc_offset       : float32        │
+│ clipping_pct    : float32        │
+│ noise_floor_ok  : bool           │
+│ spectral_ok     : bool           │
+│ result          : enum8          │
+│   {PASS, SILENCE, DC_RAIL,      │
+│    SATURATION, ABNORMAL_SPEC}    │
 └──────────────────────────────────┘
 
 «interfaceBlock» DiagnosticEvent
@@ -629,6 +682,8 @@ The following interface blocks define the typed flows for all AIQL FlowPorts. Ea
 │    FLAG_ASSERT,                  │
 │    FLAG_DEASSERT,                │
 │    BIST_RESULT,                  │
+│    NOISE_PROFILE_ALERT,          │
+│    CROSSMIC_ALERT,               │
 │    RECOVERY}                     │
 │ timestamp_us  : uint64           │
 │ prev_state    : enum8            │
@@ -657,7 +712,7 @@ FTTI Budget Allocation (500 ms total):
   - Vehicle dynamic response:         <= 200 ms
   Total:                                  500 ms
 
-BIST Timing:
+BIST Timing (Optional, Customer-Dependent — active only when exterior speaker available):
   Startup BIST:
     - Full sine sweep 500-3000 Hz:    2000 ms duration
     - Spectral match analysis:          50 ms
@@ -669,39 +724,47 @@ BIST Timing:
     - Interval:                          every 60 seconds
     - Spectral match analysis:            50 ms
     - Signal cancellation for AMO: within same 200 ms window
+
+  If no exterior speaker: startup qualification relies on passive checks
+  (noise profile + cross-mic + sanitization) passing for configurable
+  consecutive frames. No BIST timing applies.
 ```
 
 ### 4.4 SysML Block/Part Summary
 
 The following table enumerates all SysML model elements for tool import (Cameo Systems Modeler, Rhapsody, Enterprise Architect, etc.).
 
-| SysML Element | Stereotype | ASIL | Parent | Ports (FlowPort direction : type) |
-|---|---|---|---|---|
-| `DRIVE_AGX_Thor_Platform` | `«block»` | — | *(top-level)* | — |
-| `InCabinMicArray` | `«block»` | QM | Platform | pOut_analogAudio : out AnalogAudio |
-| `AudioCodec` | `«block»` | QM | Platform | pIn_analog : in AnalogAudio, pOut_i2s : out I2S_TDM, pIn_dacPcm : in BISTSignal |
-| `SirenHornClassifier` | `«block»` | QM | Platform | pIn_pcm : in I2S_TDM, pOut_classResult : out ClassifierOutput |
-| `AudioDriver` | `«block»` | QM | Platform | pIn_i2s : in I2S_TDM, pIn_classResult : in ClassifierOutput, pOut_rawFrame : out RawAudioFrame |
-| `InCabinSpeakers` | `«block»` | QM | Platform | pIn_dacSignal : in AnalogAudio |
-| **`AIQL`** | **`«block»`** | **B** | Platform | pIn_rawFrame : in RawAudioFrame, pOut_qualFrame : out QualifiedAudioFrame, pOut_bistSignal : out BISTSignal, pOut_mrmRequest : out MRMRequest, pOut_diagLog : out DiagnosticEvent |
-| `AIQL::inputDemux` | `«part»` | B | AIQL | — |
-| `AIQL::freshnessCheck` | `«part»` | B | AIQL | — |
-| `AIQL::aliveCheck` | `«part»` | B | AIQL | — |
-| `AIQL::crcCheck` | `«part»` | B | AIQL | — |
-| `AIQL::seqCheck` | `«part»` | B | AIQL | — |
-| `AIQL::rangeValidator` | `«part»` | B | AIQL | — |
-| `AIQL::qualificationDecision` | `«part»` | B | AIQL | — |
-| `AIQL::stateMachine` | `«part»` | B | AIQL | — |
-| `AIQL::outputAssembler` | `«part»` | B | AIQL | — |
-| `AIQL::bistModule` | `«part»` | B | AIQL | — |
-| `AIQL::bistModule::signalGenerator` | `«part»` | B | bistModule | — |
-| `AIQL::bistModule::spectralMatchVerifier` | `«part»` | B | bistModule | — |
-| `AIQL::bistModule::signalCanceller` | `«part»` | B | bistModule | — |
-| `AIQL::bistModule::bistRetryController` | `«part»` | B | bistModule | — |
-| `AIQL::hwProtection` | `«part»` | D | AIQL | *(provided by DRIVE OS)* |
-| `AMO` | `«block»` | Mixed | Platform | pIn_qualFrame : in QualifiedAudioFrame |
-| `VehicleSafetyManager` | `«block»` | D | Platform | pIn_mrmRequest : in MRMRequest |
-| `DRIVE_OS` | `«block»` | D | Platform | — |
+| SysML Element | Stereotype | ASIL | Parent | Ports (FlowPort direction : type) | Status |
+|---|---|---|---|---|---|
+| `DRIVE_AGX_Thor_Platform` | `«block»` | — | *(top-level)* | — | Mandatory |
+| `ExteriorMicArray` | `«block»` | QM | Customer | pOut_analogAudio : out AnalogAudio | Mandatory |
+| `AudioCodec` | `«block»` | QM | Customer | pIn_analog : in AnalogAudio, pOut_a2b : out A2B_Frame, pIn_dacPcm : in BISTSignal | Mandatory |
+| `A2B_Transceiver` | `«block»` | QM | Customer | pIn_a2b : in A2B_Frame, pOut_a2bFrame : out RawAudioFrame | Mandatory |
+| `SirenHornClassifier` | `«block»` | QM | Customer | pIn_pcm : in AudioPCM, pOut_classResult : out ClassifierOutput | Mandatory |
+| `ExteriorSpeaker` | `«block»` | QM | Customer | pIn_dacSignal : in AnalogAudio | Optional |
+| **`AIQL`** | **`«block»`** | **B** | Thor Main (BP) | pIn_rawFrame : in RawAudioFrame, pOut_qualFrame : out QualifiedAudioFrame, pOut_safetyStatus : out SafetyStatus, pOut_bistSignal : out BISTSignal (optional), pOut_diagLog : out DiagnosticEvent | Mandatory |
+| `AIQL::inputDemux` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::freshnessCheck` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::aliveCheck` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::crcCheck` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::seqCheck` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::rangeValidator` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::passiveMonitor` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::passiveMonitor::noiseProfileCheck` | `«part»` | B | passiveMonitor | — | Mandatory |
+| `AIQL::passiveMonitor::crossMicPlausibility` | `«part»` | B | passiveMonitor | — | Mandatory |
+| `AIQL::passiveMonitor::inputSanitizer` | `«part»` | B | passiveMonitor | — | Mandatory |
+| `AIQL::qualificationDecision` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::stateMachine` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::outputAssembler` | `«part»` | B | AIQL | — | Mandatory |
+| `AIQL::bistModule` | `«part»` | B | AIQL | — | Optional |
+| `AIQL::bistModule::signalGenerator` | `«part»` | B | bistModule | — | Optional |
+| `AIQL::bistModule::spectralMatchVerifier` | `«part»` | B | bistModule | — | Optional |
+| `AIQL::bistModule::signalCanceller` | `«part»` | B | bistModule | — | Optional |
+| `AIQL::bistModule::bistRetryController` | `«part»` | B | bistModule | — | Optional |
+| `AIQL::hwProtection` | `«part»` | D | AIQL | *(provided by DRIVE OS)* | Mandatory |
+| `AMO` | `«block»` | Mixed | Thor Main | pIn_qualFrame : in QualifiedAudioFrame | Mandatory |
+| `THOR_FSI` | `«block»` | D | BP | pIn_safetyStatus : in SafetyStatus (via SOC_Error / FSI_I2C) | Mandatory |
+| `DRIVE_OS` | `«block»` | D | Platform | — | Mandatory |
 
 ### 4.5 Data Flow Sequences
 
@@ -710,60 +773,59 @@ The following sequences define the nominal and BIST processing flows. Map each t
 #### 4.5.1 Nominal Frame Processing (every 50 ms)
 
 ```
-AudioDriver              AIQL                                          AMO
-    |                      |                                                |
-    |  rawAudioFrame       |                                                |
-    |  (shared mem, 20 Hz) |                                                |
-    |─────────────────────>|                                                |
-    |                      |                                                |
-    |                      |──> inputDemux                                  |
-    |                      |     |                                          |
-    |                      |     |── timestamp_us ──> freshnessCheck        |
-    |                      |     |── alive_ctr    ──> aliveCheck            |
-    |                      |     |── all_fields   ──> crcCheck              |
-    |                      |     |── seq_ctr      ──> seqCheck              |
-    |                      |     |── audio_data   ──> rangeValidator        |
-    |                      |     |   + classifier ──> rangeValidator        |
-    |                      |                                                |
-    |                      |  checkResults[5]                               |
-    |                      |     |                                          |
-    |                      |     v                                          |
-    |                      |  qualificationDecision                         |
-    |                      |     | + bistResult (from bistModule)           |
-    |                      |     | + currentState (from stateMachine)       |
-    |                      |     |                                          |
-    |                      |     |--> stateTransitionCmd                    |
-    |                      |     |       |                                  |
-    |                      |     |       v                                  |
-    |                      |     |    stateMachine.evaluate()               |
-    |                      |     |       |                                  |
-    |                      |     |       |--> qualification_status          |
-    |                      |     |       |--> mrmRequestTrigger (if any)    |
-    |                      |     |                                          |
-    |                      |     |--> aggregateFlags                        |
-    |                      |             |                                  |
-    |                      |             v                                  |
-    |                      |          outputAssembler.build()               |
-    |                      |             |                                  |
-    |                      |             | QualifiedAudioFrame              |
-    |                      |             |  { frame_id,                     |
-    |                      |             |    timestamp_us,                 |
-    |                      |             |    qualification_status,         |
-    |                      |             |    audio_data,                   |
-    |                      |             |    classifier_output,            |
-    |                      |             |    failure_flags,                |
-    |                      |             |    aiql_crc32 }                  |
-    |                      |             |                                  |
-    |                      |  pOut_qualFrame                                |
-    |                      |─────────────────────────────────────────────-->|
-    |                      |                                                |
+A2B Transceiver          AIQL (Thor Main, BP SW)                       AMO        THOR FSI
+    |                      |                                              |            |
+    |  rawAudioFrame       |                                              |            |
+    |  (A2B, 20 Hz)        |                                              |            |
+    |─────────────────────>|                                              |            |
+    |                      |                                              |            |
+    |                      |──> inputDemux                                |            |
+    |                      |     |                                        |            |
+    |                      |     |── timestamp_us ──> freshnessCheck      |            |
+    |                      |     |── alive_ctr    ──> aliveCheck          |            |
+    |                      |     |── all_fields   ──> crcCheck            |            |
+    |                      |     |── seq_ctr      ──> seqCheck            |            |
+    |                      |     |── audio_data   ──> rangeValidator      |            |
+    |                      |     |   + classifier ──> rangeValidator      |            |
+    |                      |     |── audio_data   ──> passiveMonitor      |            |
+    |                      |     |   (noise profile + cross-mic + sanitize)|            |
+    |                      |                                              |            |
+    |                      |  checkResults[5] + passiveResults            |            |
+    |                      |     |                                        |            |
+    |                      |     v                                        |            |
+    |                      |  qualificationDecision                       |            |
+    |                      |     | + passiveResult (from passiveMonitor)  |            |
+    |                      |     | + bistResult (optional, from bistModule)|            |
+    |                      |     | + currentState (from stateMachine)     |            |
+    |                      |     |                                        |            |
+    |                      |     |--> stateTransitionCmd                  |            |
+    |                      |     |       |                                |            |
+    |                      |     |       v                                |            |
+    |                      |     |    stateMachine.evaluate()             |            |
+    |                      |     |       |                                |            |
+    |                      |     |       |--> qualification_status        |            |
+    |                      |     |       |--> safetyStatusUpdate (if any) |            |
+    |                      |     |                                        |            |
+    |                      |     |--> aggregateFlags                      |            |
+    |                      |             |                                |            |
+    |                      |             v                                |            |
+    |                      |          outputAssembler.build()             |            |
+    |                      |             |                  |             |            |
+    |                      |             | QualifiedFrame   | SafetyStatus|            |
+    |                      |  pOut_qualFrame                |             |            |
+    |                      |─────────────────────────────-->|             |            |
+    |                      |                      pOut_safetyStatus       |            |
+    |                      |─────────────────────────────────────────────>|            |
+    |                      |                          (SOC_Error/FSI_I2C) |            |
 ```
 
-#### 4.5.2 Startup BIST Sequence (at power-on, before QUALIFIED)
+#### 4.5.2 Startup BIST Sequence (Optional, Customer-Dependent — at power-on, before QUALIFIED)
+
+**Note**: This sequence only applies when an exterior speaker is available on the vehicle platform. If no speaker is present (Hyperion reference platform), startup qualification relies on passive checks (TSR-AIQL-020, -021, -022) passing for a configurable number of consecutive frames.
 
 ```
-AIQL                  Codec (DAC)    In-Cabin      Codec (ADC)     AIQL
-bistModule            QM HW          Speakers      + Mic Array     bistModule
+AIQL                  Codec (DAC)    Exterior      Codec (ADC)     AIQL
+bistModule            QM HW          Speaker       + Mic Array     bistModule
     |                    |           QM HW             |               |
     |                    |              |               |               |
     | signalGenerator    |              |               |               |
@@ -779,12 +841,12 @@ bistModule            QM HW          Speakers      + Mic Array     bistModule
     |                    |─────────────>|               |               |
     |                    |              | acoustic      |               |
     |                    |              | propagation   |               |
-    |                    |              | (in-cabin     |               |
+    |                    |              | (exterior     |               |
     |                    |              |  air path)    |               |
     |                    |              |──────────────>|               |
     |                    |              |               | ADC capture   |
     |                    |              |               | (via normal   |
-    |                    |              |               |  audio path)  |
+    |                    |              |               |  A2B path)    |
     |                    |              |               |               |
     |                    |              |         rawAudioFrame with    |
     |                    |              |         BIST signal captured  |
@@ -805,16 +867,18 @@ bistModule            QM HW          Speakers      + Mic Array     bistModule
     |                                   |                              |
     |                                   v                              |
     |                          stateMachine: MRM_REQUESTED             |
-    |                          pOut_mrmRequest ──> VehicleSafetyManager |
+    |                          pOut_safetyStatus ──> THOR FSI          |
     |                                                                  |
 ```
 
-#### 4.5.3 Periodic BIST Sequence (every 60 s during QUALIFIED)
+#### 4.5.3 Periodic BIST Sequence (Optional, Customer-Dependent — every 60 s during QUALIFIED)
+
+**Note**: This sequence only applies when an exterior speaker is available. If no speaker, continuous passive monitoring (TSR-AIQL-020, -021, -022) provides ongoing diagnostic coverage.
 
 ```
-AIQL              Codec (DAC)    Speakers    Mic Array      AIQL           AMO
-bistModule        QM HW          QM HW       + Codec        bistModule     (Alpamayo)
-    |                |              |            |               |             |
+AIQL              Codec (DAC)    Exterior    Mic Array      AIQL           AMO
+bistModule        QM HW          Speaker     + Codec        bistModule     (Alpamayo)
+    |                |           QM HW          |               |             |
     | [timer: 60 s]  |              |            |               |             |
     |                |              |            |               |             |
     | signalGenerator|              |            |               |             |
@@ -843,7 +907,7 @@ bistModule        QM HW          QM HW       + Codec        bistModule     (Alpa
     |                                       ──NO──> FAIL CONFIRMED            |
     |                                                  |                      |
     |                                      stateMachine: MRM_REQUESTED        |
-    |                                      pOut_mrmRequest ──> VehicleSafMgr  |
+    |                                      pOut_safetyStatus ──> THOR FSI     |
     |                                                                         |
 ```
 
@@ -936,7 +1000,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 | **Failure Mode** | No audio frames received by AIQL |
 | **Failure Mechanism** | Microphone hardware failure; codec power loss; driver crash; bus failure; memory allocation failure |
 | **Effect on AMO** | Total loss of siren/horn detection; emergency vehicle detection relies solely on camera |
-| **Detection Mechanism** | Frame reception timeout (TSR-AIQL-001), alive counter missing (TSR-AIQL-002); BIST loopback detection (TSR-AIQL-016); graceful degradation (TSR-AIQL-007) |
+| **Detection Mechanism** | Frame reception timeout (TSR-AIQL-001), alive counter missing (TSR-AIQL-002); noise profile monitoring — silence detection (TSR-AIQL-020); cross-mic plausibility — all channels simultaneously lost (TSR-AIQL-021); BIST loopback detection (TSR-AIQL-016, optional/customer-dependent); graceful degradation (TSR-AIQL-007) |
 | **Safety Impact** | Potential violation of SG-EMV-01 if camera-only detection is insufficient |
 | **Frequency Estimate** | Low (hardware failure rate ~500 FIT for complete path loss) |
 
@@ -969,7 +1033,7 @@ The following failure modes are identified for the QM audio input path. Each fai
 | **Failure Mode** | Audio signal values exceed physical plausibility bounds |
 | **Failure Mechanism** | Microphone bias failure; codec gain register corruption; ADC saturation; reference voltage drift |
 | **Effect on AMO** | Clipped or offset audio distorts frequency content, leading to classifier errors |
-| **Detection Mechanism** | Range validation (TSR-AIQL-005) — sample amplitude, DC offset, noise floor checks; BIST spectral match detects analog path degradation (TSR-AIQL-016) |
+| **Detection Mechanism** | Range validation (TSR-AIQL-005) — sample amplitude, DC offset, noise floor checks; noise profile monitoring — DC rail, persistent saturation, abnormal spectral content (TSR-AIQL-020); cross-mic plausibility — single channel deviating from peers indicates hardware fault (TSR-AIQL-021); BIST spectral match detects analog path degradation (TSR-AIQL-016, optional/customer-dependent) |
 | **Safety Impact** | Classifier output unreliable — potential SG-EMV-01 violation |
 | **Frequency Estimate** | Low (analog fault rate ~50 FIT; codec register corruption ~20 FIT) |
 
@@ -1017,38 +1081,66 @@ The following failure modes are identified for the QM audio input path. Each fai
 | **Safety Impact** | **Critical** — defeats both the QM element and the safety mechanism simultaneously |
 | **Frequency Estimate** | Very Low (common cause beta factor ~2% of single-point failure rate) |
 
-#### FM-09: Speaker Subsystem Failure
+#### FM-09: Speaker Subsystem Failure (Optional, Customer-Dependent)
+
+**Note**: This failure mode only applies when an exterior speaker is available on the vehicle platform for acoustic loopback BIST. If no speaker is present (Hyperion reference platform does not include an exterior speaker for BIST purposes), this failure mode does not apply and passive qualification checks (noise profile, cross-mic plausibility, input sanitization) serve as the primary diagnostic approach.
 
 | Attribute | Description |
 |-----------|-------------|
-| **Failure Mode** | In-cabin speaker cannot produce BIST test signal |
+| **Failure Mode** | Exterior speaker cannot produce BIST test signal |
 | **Failure Mechanism** | Speaker driver IC failure; speaker coil open/short; codec DAC failure; wiring harness disconnection; amplifier fault |
-| **Effect on AMO** | BIST cannot execute — audio path integrity cannot be verified; loss of BIST coverage for FM-01 and FM-04 |
+| **Effect on AMO** | BIST cannot execute — loss of acoustic loopback coverage for FM-01 and FM-04. Passive qualification checks (TSR-AIQL-020, TSR-AIQL-021, TSR-AIQL-022) continue to provide diagnostic coverage. |
 | **Detection Mechanism** | BIST output monitoring (TSR-AIQL-015) — expected signal not detected at microphone within timeout; FF_BIST_SPEAKER flag set |
-| **Safety Impact** | Loss of BIST diagnostic coverage — degrades confidence in audio path integrity. Triggers MRM after retry exhaustion (TSR-AIQL-019). |
+| **Safety Impact** | Loss of optional BIST diagnostic coverage — degrades confidence in end-to-end acoustic path integrity. Triggers MRM after retry exhaustion (TSR-AIQL-019) if BIST is enabled. |
 | **Frequency Estimate** | Low (speaker failure rate ~100 FIT; amplifier failure ~50 FIT) |
 
-#### FM-10: Acoustic Coupling Degradation
+#### FM-10: Acoustic Coupling Degradation (Optional, Customer-Dependent)
+
+**Note**: This failure mode only applies when acoustic loopback BIST is enabled (exterior speaker available). If no speaker is present, acoustic coupling between speaker and microphone is not relevant. Microphone-side degradation (sensitivity drift, membrane contamination) is instead detected by passive checks: noise profile monitoring (TSR-AIQL-020) and cross-mic plausibility (TSR-AIQL-021).
 
 | Attribute | Description |
 |-----------|-------------|
-| **Failure Mode** | BIST spectral match fails due to degraded acoustic coupling between in-cabin speakers and microphones |
-| **Failure Mechanism** | Physical obstruction (object placed over microphone); microphone membrane contamination; speaker baffle deformation; cabin seal change affecting acoustic path; microphone sensitivity drift |
+| **Failure Mode** | BIST spectral match fails due to degraded acoustic coupling between exterior speaker and microphones |
+| **Failure Mechanism** | Physical obstruction (debris over speaker/microphone); microphone membrane contamination; speaker baffle deformation; environmental exposure affecting acoustic path; microphone sensitivity drift |
 | **Effect on AMO** | BIST indicates audio path degradation — correlation below threshold suggests microphone or acoustic path has changed, potentially affecting siren detection quality |
 | **Detection Mechanism** | BIST spectral match correlation check (TSR-AIQL-016) — correlation < 0.85 or amplitude deviation > +/- 6 dB; FF_BIST_COUPLING flag set |
-| **Safety Impact** | Indicates potential degradation of siren detection capability. Triggers MRM after retry exhaustion (TSR-AIQL-019). |
+| **Safety Impact** | Indicates potential degradation of siren detection capability. Triggers MRM after retry exhaustion (TSR-AIQL-019) if BIST is enabled. |
 | **Frequency Estimate** | Medium (environmental contamination ~200 FIT; sensitivity drift ~50 FIT over lifetime) |
 
-#### FM-11: BIST False Failure
+#### FM-11: BIST False Failure (Optional, Customer-Dependent)
+
+**Note**: This failure mode only applies when acoustic loopback BIST is enabled (exterior speaker available). If no speaker is present, BIST is not executed and this failure mode does not apply. For platforms without BIST, the false failure risk shifts to passive checks (noise profile and cross-mic plausibility), which have lower false-positive rates because they do not inject a test signal into the acoustic environment.
 
 | Attribute | Description |
 |-----------|-------------|
-| **Failure Mode** | BIST spectral match fails despite healthy audio path due to cabin noise interference |
-| **Failure Mechanism** | Loud music playback during BIST window; passenger conversation masking BIST signal; HVAC blower noise at BIST frequencies; road noise during periodic BIST |
+| **Failure Mode** | BIST spectral match fails despite healthy audio path due to environmental noise interference |
+| **Failure Mechanism** | Wind noise during BIST window; traffic noise masking BIST signal; road surface noise at BIST frequencies; environmental noise during periodic BIST |
 | **Effect on AMO** | False BIST failure triggers unnecessary MRM — availability impact (vehicle stops when audio path is actually functional) |
 | **Detection Mechanism** | Retry mechanism (TSR-AIQL-017, TSR-AIQL-019) — 3 retries at startup, 2 retries during periodic BIST; signal-to-interference analysis during spectral match |
 | **Safety Impact** | Availability impact only — false MRM is a nuisance but not a safety hazard. Retry mechanism reduces false failure probability. |
-| **Frequency Estimate** | Medium (dependent on cabin noise environment; mitigated by BIST signal level at -20 dBFS and retry logic) |
+| **Frequency Estimate** | Medium (dependent on environmental noise; mitigated by BIST signal level at -20 dBFS and retry logic) |
+
+#### FM-12: Microphone Blockage/Environmental Damage
+
+| Attribute | Description |
+|-----------|-------------|
+| **Failure Mode** | One or more exterior microphone channels are blocked or damaged by environmental exposure |
+| **Failure Mechanism** | Ice accumulation on microphone port; mud/debris covering microphone; water ingress into microphone cavity; road spray coating; insect or bird nesting material blockage; UV degradation of microphone membrane |
+| **Effect on AMO** | Blocked or damaged microphone produces attenuated, distorted, or absent audio on affected channel(s); siren detection capability degraded on affected channels; if all channels affected, total loss of siren detection |
+| **Detection Mechanism** | Noise floor analysis (TSR-AIQL-020) — blocked mic exhibits abnormally low noise floor (silence) or altered spectral characteristics; cross-mic plausibility (TSR-AIQL-021) — blocked channel deviates significantly from peers in RMS level and spectral shape; input sanitization (TSR-AIQL-022) — frames from blocked mic may exhibit persistent low-amplitude or DC-biased signals |
+| **Safety Impact** | Partial degradation if subset of mics affected (remaining mics maintain siren detection). Complete loss if all mics blocked — detected and mitigated by transition to NOT_QUALIFIED. |
+| **Frequency Estimate** | Medium (exterior mounting increases exposure to environmental hazards; frequency depends on operating environment and vehicle speed) |
+
+#### FM-13: Cross-Mic Plausibility Failure
+
+| Attribute | Description |
+|-----------|-------------|
+| **Failure Mode** | One or more microphone channels deviate significantly from peer channels in RMS level or spectral characteristics |
+| **Failure Mechanism** | Individual microphone hardware degradation (sensitivity drift, preamp failure); individual channel wiring fault (intermittent connection, increased resistance); individual codec ADC channel failure; per-channel gain register corruption |
+| **Effect on AMO** | Divergent channel provides inconsistent audio data that may confuse direction-of-arrival estimation or reduce siren detection confidence; if majority of channels diverge, overall audio quality compromised |
+| **Detection Mechanism** | Cross-mic plausibility check (TSR-AIQL-021) — compare RMS levels and spectral characteristics across all mic channels; flag any channel deviating by more than configurable threshold (default: X dB) from the median of its peers. Requires minimum 2 microphones for comparison. |
+| **Safety Impact** | Individual channel divergence: DEGRADED state, AMO continues with remaining qualified channels. Multiple channel divergence: NOT_QUALIFIED state, audio excluded from fusion. |
+| **Frequency Estimate** | Low (individual channel hardware failure ~50 FIT per channel; increases with number of channels and exposure to vibration/thermal cycling) |
 
 ### 6.2 Freedom From Interference (FFI) Analysis
 
@@ -1227,87 +1319,126 @@ FFI analysis ensures that failures in the QM audio subsystem cannot propagate in
 | **Verification** | FI-09 |
 | **Acceptance Criterion** | Watchdog triggers within 100 ms of AIQL execution starvation; NOT_QUALIFIED output asserted within 150 ms of starvation onset. |
 
-### TSR-AIQL-015: BIST Reference Signal Generation
+### TSR-AIQL-015: BIST Reference Signal Generation (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-015 |
-| **Requirement** | The AIQL shall generate a logarithmic sine sweep reference signal from 500 Hz to 3000 Hz at -20 dBFS amplitude for BIST loopback verification. The signal shall be output to the in-cabin speakers via the codec DAC interface (Section 4.2.5). The signal shall have total harmonic distortion (THD) < 1% and frequency accuracy within +/- 2% of the specified sweep profile. |
-| **ASIL** | B |
-| **Rationale** | The BIST reference signal must cover the siren frequency range (500-3000 Hz) to verify the audio path across all frequencies relevant to emergency vehicle detection. The -20 dBFS amplitude is chosen to be clearly audible above typical cabin ambient noise (~40-60 dB SPL) while remaining below uncomfortable listening levels. Logarithmic sweep provides equal energy per octave, matching human hearing perception and siren frequency distribution. |
-| **Failure Mode Addressed** | FM-09 (Speaker Failure), FM-10 (Coupling Degradation) |
-| **Verification** | FI-10, unit test |
+| **Requirement** | **Optional — active only when an exterior speaker is available on the vehicle platform.** The AIQL shall generate a logarithmic sine sweep reference signal from 500 Hz to 3000 Hz at -20 dBFS amplitude for acoustic loopback verification. The signal shall be output to the exterior speaker via the codec DAC interface (Section 4.2.5). The signal shall have total harmonic distortion (THD) < 1% and frequency accuracy within +/- 2% of the specified sweep profile. If no exterior speaker is present, this TSR is not applicable and BIST functionality is disabled. |
+| **ASIL** | B (when active) |
+| **Rationale** | The BIST reference signal must cover the siren frequency range (500-3000 Hz) to verify the audio path across all frequencies relevant to emergency vehicle detection. The -20 dBFS amplitude is chosen to be clearly detectable above typical ambient noise while remaining below levels that could interfere with exterior environment perception. Logarithmic sweep provides equal energy per octave, matching human hearing perception and siren frequency distribution. This TSR is optional because the Hyperion reference platform does not include an exterior speaker for BIST; passive qualification checks (TSR-AIQL-020, -021, -022) provide the primary diagnostic approach. |
+| **Failure Mode Addressed** | FM-09 (Speaker Failure), FM-10 (Coupling Degradation) — both optional/customer-dependent |
+| **Verification** | FI-10, unit test (when speaker is available) |
 | **Acceptance Criterion** | Signal generation within specified frequency range, amplitude, and THD limits; sweep profile matches reference within +/- 2% frequency accuracy. |
 
-### TSR-AIQL-016: BIST Spectral Match Verification
+### TSR-AIQL-016: BIST Spectral Match Verification (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-016 |
-| **Requirement** | The AIQL shall capture the microphone response to the BIST reference signal and perform spectral match verification. The verification shall compute: (a) Normalized cross-correlation between expected and received spectral envelopes — pass threshold: correlation >= 0.85; (b) Amplitude deviation per 1/3-octave band — pass threshold: deviation within +/- 6 dB of reference. Both criteria must be met for BIST pass. Failure of either criterion shall set the appropriate failure flag (FF_BIST_FAIL, FF_BIST_COUPLING). |
-| **ASIL** | B |
-| **Rationale** | Spectral match verification confirms that the complete acoustic-to-digital path (speaker → air → microphone → codec → digital) preserves the frequency characteristics needed for siren detection. The 0.85 correlation threshold allows for normal cabin acoustic variation while detecting significant path degradation. The +/- 6 dB amplitude tolerance per 1/3-octave band detects frequency-selective faults (e.g., microphone resonance shift, speaker cone damage) while accommodating cabin acoustic transfer function variation. |
-| **Failure Mode Addressed** | FM-01 (Loss), FM-04 (Out-of-Range), FM-10 (Coupling Degradation) |
-| **Verification** | FI-11, unit test |
-| **Acceptance Criterion** | Correct pass/fail determination for all test vectors; zero false passes for injected path degradation exceeding thresholds; false failure rate < 0.1% under nominal cabin conditions. |
+| **Requirement** | **Optional — active only when an exterior speaker is available on the vehicle platform.** The AIQL shall capture the microphone response to the BIST reference signal and perform spectral match verification. The verification shall compute: (a) Normalized cross-correlation between expected and received spectral envelopes — pass threshold: correlation >= 0.85; (b) Amplitude deviation per 1/3-octave band — pass threshold: deviation within +/- 6 dB of reference. Both criteria must be met for BIST pass. Failure of either criterion shall set the appropriate failure flag (FF_BIST_FAIL, FF_BIST_COUPLING). If no exterior speaker is present, this TSR is not applicable. |
+| **ASIL** | B (when active) |
+| **Rationale** | Spectral match verification confirms that the complete acoustic-to-digital path (speaker → air → microphone → codec → digital) preserves the frequency characteristics needed for siren detection. The 0.85 correlation threshold allows for normal acoustic variation while detecting significant path degradation. The +/- 6 dB amplitude tolerance per 1/3-octave band detects frequency-selective faults (e.g., microphone resonance shift, speaker cone damage) while accommodating acoustic transfer function variation. This TSR is optional because the Hyperion reference platform does not include an exterior speaker; passive qualification checks provide the primary diagnostic approach. |
+| **Failure Mode Addressed** | FM-01 (Loss), FM-04 (Out-of-Range), FM-10 (Coupling Degradation) — FM-10 is optional/customer-dependent |
+| **Verification** | FI-11, unit test (when speaker is available) |
+| **Acceptance Criterion** | Correct pass/fail determination for all test vectors; zero false passes for injected path degradation exceeding thresholds; false failure rate < 0.1% under nominal conditions. |
 
-### TSR-AIQL-017: Startup BIST Precondition
+### TSR-AIQL-017: Startup BIST Precondition (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-017 |
-| **Requirement** | The AIQL shall execute a full startup BIST (2000 ms sine sweep) before transitioning from NOT_QUALIFIED to QUALIFIED state on system initialization. The startup BIST must pass before any audio data is qualified for AMO. If the startup BIST fails, the AIQL shall retry up to 3 times. If all 3 retries fail, the AIQL shall remain in NOT_QUALIFIED state and request MRM transition per TSR-AIQL-019. |
-| **ASIL** | B |
-| **Rationale** | Startup BIST ensures the audio path is verified before any audio data influences AMO sensor fusion. The 2000 ms sweep duration provides comprehensive frequency coverage. Three retries accommodate transient interference during vehicle startup (e.g., door closing, engine start noise). Total startup BIST budget: ~8.2 seconds worst case (4 attempts x 2050 ms). |
-| **Failure Mode Addressed** | FM-09 (Speaker Failure), FM-10 (Coupling Degradation) |
-| **Verification** | FI-12, unit test |
+| **Requirement** | **Optional — active only when an exterior speaker is available on the vehicle platform.** The AIQL shall execute a full startup BIST (2000 ms sine sweep) before transitioning from NOT_QUALIFIED to QUALIFIED state on system initialization. The startup BIST must pass before any audio data is qualified for AMO. If the startup BIST fails, the AIQL shall retry up to 3 times. If all 3 retries fail, the AIQL shall remain in NOT_QUALIFIED state and request MRM transition per TSR-AIQL-019. If no exterior speaker is present, startup qualification relies on passive checks (TSR-AIQL-020, -021, -022) passing for a configurable number of consecutive frames. |
+| **ASIL** | B (when active) |
+| **Rationale** | Startup BIST ensures the audio path is verified before any audio data influences AMO sensor fusion. The 2000 ms sweep duration provides comprehensive frequency coverage. Three retries accommodate transient interference during vehicle startup. Total startup BIST budget: ~8.2 seconds worst case (4 attempts x 2050 ms). This TSR is optional because the Hyperion reference platform does not include an exterior speaker. |
+| **Failure Mode Addressed** | FM-09 (Speaker Failure), FM-10 (Coupling Degradation) — both optional/customer-dependent |
+| **Verification** | FI-12, unit test (when speaker is available) |
 | **Acceptance Criterion** | No transition to QUALIFIED without BIST pass; all 3 retries executed on persistent failure; MRM requested after retry exhaustion. |
 
-### TSR-AIQL-018: Periodic BIST Scheduling
+### TSR-AIQL-018: Periodic BIST Scheduling (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-018 |
-| **Requirement** | The AIQL shall execute a periodic BIST (200 ms abbreviated sweep burst) every 60 seconds during QUALIFIED operation. During the periodic BIST window, the AIQL shall: (a) Subtract the known BIST signal from the audio data before forwarding to AMO (signal cancellation); (b) Perform spectral match verification per TSR-AIQL-016 on the microphone capture. Signal cancellation shall achieve >= 30 dB attenuation of the BIST signal in the forwarded audio stream. |
-| **ASIL** | B |
-| **Rationale** | Periodic BIST detects audio path degradation that develops during driving (e.g., microphone contamination, connector vibration loosening, thermal drift). The 60-second interval balances diagnostic coverage against cabin audio intrusion. The 200 ms burst is shorter than the startup sweep but covers the critical siren frequency range. Signal cancellation prevents the BIST signal from reaching AMO and causing false siren detections. The 30 dB cancellation target reduces the BIST signal below the classifier noise floor. |
-| **Failure Mode Addressed** | FM-10 (Coupling Degradation), FM-11 (BIST False Failure) |
-| **Verification** | FI-13, unit test |
+| **Requirement** | **Optional — active only when an exterior speaker is available on the vehicle platform.** The AIQL shall execute a periodic BIST (200 ms abbreviated sweep burst) every 60 seconds during QUALIFIED operation. During the periodic BIST window, the AIQL shall: (a) Subtract the known BIST signal from the audio data before forwarding to AMO (signal cancellation); (b) Perform spectral match verification per TSR-AIQL-016 on the microphone capture. Signal cancellation shall achieve >= 30 dB attenuation of the BIST signal in the forwarded audio stream. If no exterior speaker is present, this TSR is not applicable; continuous passive monitoring (TSR-AIQL-020, -021, -022) provides ongoing diagnostic coverage without requiring a test signal. |
+| **ASIL** | B (when active) |
+| **Rationale** | Periodic BIST detects audio path degradation that develops during driving (e.g., microphone contamination, connector vibration loosening, thermal drift). The 60-second interval balances diagnostic coverage against environmental audio intrusion. The 200 ms burst is shorter than the startup sweep but covers the critical siren frequency range. Signal cancellation prevents the BIST signal from reaching AMO and causing false siren detections. The 30 dB cancellation target reduces the BIST signal below the classifier noise floor. This TSR is optional because the Hyperion reference platform does not include an exterior speaker. |
+| **Failure Mode Addressed** | FM-10 (Coupling Degradation), FM-11 (BIST False Failure) — both optional/customer-dependent |
+| **Verification** | FI-13, unit test (when speaker is available) |
 | **Acceptance Criterion** | BIST executes within +/- 5 seconds of scheduled interval; signal cancellation >= 30 dB measured at AIQL output; no false siren detections by classifier during BIST window. |
 
-### TSR-AIQL-019: MRM Transition on Confirmed BIST Failure
+### TSR-AIQL-019: MRM Transition on Persistent Qualification Failure
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | TSR-AIQL-019 |
-| **Requirement** | Upon confirmed BIST failure (startup: 3 consecutive failures; periodic: 2 consecutive failures), the AIQL shall: (a) Set qualification_status = NOT_QUALIFIED with FF_BIST_FAIL (and FF_BIST_SPEAKER or FF_BIST_COUPLING as applicable); (b) Transmit an MRM request to the vehicle safety manager via a dedicated safety communication channel; (c) Log the BIST failure details and MRM request to the diagnostic log (TSR-AIQL-011). The MRM request shall trigger a controlled vehicle stop (Minimal Risk Maneuver). The MRM_REQUESTED state is terminal — recovery requires system restart. |
+| **Requirement** | Upon persistent qualification failure, the AIQL shall: (a) Set qualification_status = NOT_QUALIFIED with applicable failure flags; (b) Transmit an MRM request to the vehicle safety manager via THOR FSI (SOC_Error / FSI_I2C safety signaling path); (c) Log the failure details and MRM request to the diagnostic log (TSR-AIQL-011). The MRM request shall trigger a controlled vehicle stop (Minimal Risk Maneuver). The MRM_REQUESTED state is terminal — recovery requires system restart. Persistent qualification failure is defined as: (i) Confirmed BIST failure (when BIST is enabled): startup 3 consecutive failures, periodic 2 consecutive failures — sets FF_BIST_FAIL; (ii) Persistent passive check failure: NOT_QUALIFIED state sustained for a configurable duration (default: 30 seconds) without recovery, indicating structural audio path degradation not recoverable by transient fault mechanisms. |
 | **ASIL** | B |
-| **Rationale** | BIST failure indicates a fundamental hardware or acoustic path degradation that cannot be resolved by software. Unlike passive data integrity checks (freshness, CRC), which detect transient faults, BIST failure reveals structural degradation of the audio capture chain. MRM is appropriate because: (1) the audio path cannot be trusted for siren detection; (2) the degradation is likely persistent (not transient); (3) continued driving without verified audio path integrity violates the safety concept assumptions. Two retries for periodic BIST (vs. 3 for startup) reflect the higher confidence that a failure during driving represents a real fault rather than transient noise. |
-| **Failure Mode Addressed** | FM-09 (Speaker Failure), FM-10 (Coupling Degradation) |
+| **Rationale** | MRM is appropriate when audio path degradation is persistent and cannot be resolved by software retry or transient recovery. For BIST-equipped platforms, BIST failure reveals structural degradation of the acoustic capture chain. For all platforms, sustained NOT_QUALIFIED state (passive checks persistently failing) indicates a hardware or environmental condition that precludes audio qualification. MRM ensures the vehicle reaches a safe state when audio path integrity cannot be verified. Two retries for periodic BIST (vs. 3 for startup) reflect the higher confidence that a failure during driving represents a real fault rather than transient noise. |
+| **Failure Mode Addressed** | FM-09 (Speaker Failure — optional), FM-10 (Coupling Degradation — optional), FM-12 (Mic Blockage), FM-13 (Cross-Mic Plausibility Failure) |
 | **Verification** | FI-14, unit test |
-| **Acceptance Criterion** | MRM requested within 500 ms of confirmed BIST failure; no MRM request before retry exhaustion; MRM_REQUESTED state is terminal (no automatic recovery). |
+| **Acceptance Criterion** | MRM requested within 500 ms of confirmed persistent failure; no MRM request before retry/duration exhaustion; MRM_REQUESTED state is terminal (no automatic recovery). |
+
+### TSR-AIQL-020: Noise Profile Monitoring
+
+| Attribute | Value |
+|-----------|-------|
+| **ID** | TSR-AIQL-020 |
+| **Requirement** | The AIQL shall monitor the noise profile of each exterior microphone channel every audio frame (20 Hz). The AIQL shall flag a channel as anomalous and set FF_NOISE_PROFILE if any of the following conditions are detected: (a) Silence — RMS level below noise floor threshold (configurable, default: 10 LSB RMS) indicating disconnected or blocked microphone; (b) DC rail — mean sample value within 500 LSB of positive or negative rail, indicating bias circuit failure; (c) Persistent saturation — more than 5% of samples clipped (|value| > 32000) for 3 or more consecutive frames, indicating gain fault or sustained overload; (d) Abnormal spectral content — spectral energy distribution deviates significantly from expected exterior noise profile (configurable spectral template), indicating hardware fault or severe environmental anomaly. |
+| **ASIL** | B |
+| **Rationale** | Noise profile monitoring provides continuous passive verification of microphone health without requiring a test signal or exterior speaker. A functioning exterior microphone in an operational vehicle always exhibits a characteristic noise profile (road noise, wind, ambient sound). Deviations from this profile indicate hardware faults (disconnected, blocked, bias failure) or environmental conditions (complete blockage by ice/mud) that compromise siren detection. This is the primary diagnostic mechanism for platforms without acoustic loopback BIST. |
+| **Failure Mode Addressed** | FM-01 (Loss — silence detection), FM-04 (Out-of-Range — DC rail, saturation), FM-12 (Mic Blockage) |
+| **Verification** | FI-15, unit test |
+| **Acceptance Criterion** | 100% detection of silence, DC rail, and persistent saturation conditions within 3 frames (150 ms); abnormal spectral detection within 10 frames (500 ms); zero false alerts during nominal driving with ambient noise > 50 dB(A). |
+
+### TSR-AIQL-021: Cross-Microphone Plausibility
+
+| Attribute | Value |
+|-----------|-------|
+| **ID** | TSR-AIQL-021 |
+| **Requirement** | The AIQL shall compare RMS levels and spectral characteristics across all exterior microphone channels every audio frame (20 Hz). The AIQL shall flag any channel deviating by more than X dB (configurable, default: 12 dB) from the median RMS of its peer channels and set FF_CROSSMIC. Cross-mic plausibility requires a minimum of 2 microphones. With fewer than 2 microphones, this check is disabled and a diagnostic log entry is generated at startup. |
+| **ASIL** | B |
+| **Rationale** | Cross-mic plausibility exploits the physical redundancy of the exterior microphone array. All exterior microphones on the same vehicle experience similar acoustic environments (road noise, wind, ambient sound). A single channel deviating significantly from its peers indicates a hardware fault (sensitivity loss, bias failure, wiring issue) or localized blockage (mud on one mic) specific to that channel. The median-based comparison is robust against a single outlier channel. The 12 dB default threshold accommodates normal variation due to microphone placement and directional sound sources while detecting faults that degrade siren detection capability. |
+| **Failure Mode Addressed** | FM-01 (Loss — single channel), FM-04 (Out-of-Range — single channel), FM-12 (Mic Blockage — localized), FM-13 (Cross-Mic Plausibility Failure) |
+| **Verification** | FI-16, unit test |
+| **Acceptance Criterion** | Detection of single-channel divergence (>X dB from median) within 2 frames (100 ms); correct identification of the divergent channel; no false alerts for nominal multi-channel audio with directional sound sources. |
+
+### TSR-AIQL-022: Input Sanitization
+
+| Attribute | Value |
+|-----------|-------|
+| **ID** | TSR-AIQL-022 |
+| **Requirement** | The AIQL shall verify each audio frame is within expected bounds before forwarding to AMO. Specifically: (a) Amplitude range — all samples within int16 range with no more than 5% clipped; (b) Noise floor — RMS above minimum threshold; (c) No persistent clipping — saturation must not persist for more than 3 consecutive frames; (d) No persistent DC offset — mean value within [-500, +500] LSB. Frames that fail any sanitization check shall be zero-filled (audio data and classifier output cleared), the qualification_status shall be set to NOT_QUALIFIED, and the frame shall be forwarded to AMO with FF_RANGE and/or FF_NOISE_PROFILE flags set. |
+| **ASIL** | B |
+| **Rationale** | Input sanitization is the final safety gate before audio data enters the AMO perception pipeline. It ensures that grossly abnormal audio (saturated, DC-railed, silent, or otherwise corrupted) does not reach AMO in a QUALIFIED state. By zero-filling and flagging non-conforming frames, the AIQL guarantees that AMO either receives valid audio or explicitly knows to exclude the audio channel from fusion. This complements the per-check failure flags (TSR-AIQL-001 through -005) with a holistic frame-level quality gate. |
+| **Failure Mode Addressed** | FM-04 (Out-of-Range), FM-12 (Mic Blockage — attenuated/absent signal), FM-13 (Cross-Mic Plausibility Failure — divergent channel data) |
+| **Verification** | FI-15, FI-17, unit test |
+| **Acceptance Criterion** | 100% of out-of-bounds frames are zero-filled and flagged NOT_QUALIFIED before forwarding to AMO; zero leakage of grossly abnormal audio data to AMO in QUALIFIED state. |
 
 ### 7.1 TSR Summary Table
 
-| TSR ID | Short Name | ASIL | Failure Modes | FFI Type |
-|--------|-----------|------|---------------|----------|
-| TSR-AIQL-001 | Freshness Check | B | FM-01, FM-03 | Communication |
-| TSR-AIQL-002 | Alive Counter | B | FM-01, FM-03 | Communication |
-| TSR-AIQL-003 | CRC-32 Integrity | B | FM-02 | Communication |
-| TSR-AIQL-004 | Sequence Counter | B | FM-07 | Communication |
-| TSR-AIQL-005 | Range Validation | B | FM-04 | Communication |
-| TSR-AIQL-007 | Graceful Degradation | B | FM-01, FM-02, FM-03, FM-08, FM-09, FM-10 | — |
-| TSR-AIQL-008 | Recovery Criteria | B | All | — |
-| TSR-AIQL-009 | WCET | B | Temporal FFI | Temporal |
-| TSR-AIQL-010 | ASIL B Process | B | All | — |
-| TSR-AIQL-011 | Diagnostic Logging | QM | All | — |
-| TSR-AIQL-012 | Spatial FFI (MPU) | B | FM-08, Spatial FFI | Spatial |
-| TSR-AIQL-013 | Temporal FFI (Watchdog) | B | FM-08, Temporal FFI | Temporal |
-| TSR-AIQL-015 | BIST Signal Generation | B | FM-09, FM-10 | — |
-| TSR-AIQL-016 | BIST Spectral Match | B | FM-01, FM-04, FM-10 | — |
-| TSR-AIQL-017 | Startup BIST | B | FM-09, FM-10 | — |
-| TSR-AIQL-018 | Periodic BIST | B | FM-10, FM-11 | — |
-| TSR-AIQL-019 | MRM on BIST Failure | B | FM-09, FM-10 | — |
+| TSR ID | Short Name | ASIL | Failure Modes | FFI Type | Status |
+|--------|-----------|------|---------------|----------|--------|
+| TSR-AIQL-001 | Freshness Check | B | FM-01, FM-03 | Communication | Mandatory |
+| TSR-AIQL-002 | Alive Counter | B | FM-01, FM-03 | Communication | Mandatory |
+| TSR-AIQL-003 | CRC-32 Integrity | B | FM-02 | Communication | Mandatory |
+| TSR-AIQL-004 | Sequence Counter | B | FM-07 | Communication | Mandatory |
+| TSR-AIQL-005 | Range Validation | B | FM-04 | Communication | Mandatory |
+| TSR-AIQL-007 | Graceful Degradation | B | FM-01, FM-02, FM-03, FM-08, FM-09, FM-10, FM-12, FM-13 | — | Mandatory |
+| TSR-AIQL-008 | Recovery Criteria | B | All | — | Mandatory |
+| TSR-AIQL-009 | WCET | B | Temporal FFI | Temporal | Mandatory |
+| TSR-AIQL-010 | ASIL B Process | B | All | — | Mandatory |
+| TSR-AIQL-011 | Diagnostic Logging | QM | All | — | Mandatory |
+| TSR-AIQL-012 | Spatial FFI (MPU) | B | FM-08, Spatial FFI | Spatial | Mandatory |
+| TSR-AIQL-013 | Temporal FFI (Watchdog) | B | FM-08, Temporal FFI | Temporal | Mandatory |
+| TSR-AIQL-015 | BIST Signal Generation | B | FM-09, FM-10 | — | **Optional** (customer-dependent) |
+| TSR-AIQL-016 | BIST Spectral Match | B | FM-01, FM-04, FM-10 | — | **Optional** (customer-dependent) |
+| TSR-AIQL-017 | Startup BIST | B | FM-09, FM-10 | — | **Optional** (customer-dependent) |
+| TSR-AIQL-018 | Periodic BIST | B | FM-10, FM-11 | — | **Optional** (customer-dependent) |
+| TSR-AIQL-019 | MRM on Persistent Qual. Failure | B | FM-09, FM-10, FM-12, FM-13 | — | Mandatory |
+| TSR-AIQL-020 | Noise Profile Monitoring | B | FM-01, FM-04, FM-12 | — | Mandatory |
+| TSR-AIQL-021 | Cross-Mic Plausibility | B | FM-01, FM-04, FM-12, FM-13 | — | Mandatory |
+| TSR-AIQL-022 | Input Sanitization | B | FM-04, FM-12, FM-13 | — | Mandatory |
 
 ---
 
@@ -1320,16 +1451,17 @@ The ASIL B safety integrity for SG-EMV-01 is achieved through ASIL decomposition
 ```
 Safety Goal SG-EMV-01: ASIL B
     |
-    +--- ASIL B (AIQL) — Safety mechanism qualifying audio input + BIST
+    +--- ASIL B (AIQL on Thor Main, BP SW) — Safety mechanism qualifying audio input
+    |     (passive checks mandatory; BIST optional/customer-dependent)
     |
-    +--- QM (Audio HW) — In-cabin microphones, codec, amplifiers
+    +--- QM (Audio HW) — Exterior microphones, codec, A2B transceiver
     |
     +--- QM (Audio SW) — Audio driver, DSP firmware, siren classifier
     |
-    +--- QM (Speaker HW) — In-cabin speakers, DAC, speaker amplifier
+    +--- QM (Speaker HW) — Exterior speaker, DAC, speaker amplifier (optional)
 ```
 
-**Decomposition**: ASIL B = ASIL B(AIQL) + QM(Audio HW) + QM(Audio SW) + QM(Speaker HW)
+**Decomposition**: ASIL B = ASIL B(AIQL) + QM(Audio HW) + QM(Audio SW) + QM(Speaker HW, optional)
 
 This decomposition is valid under ISO 26262-9 Clause 5 because:
 
@@ -1382,8 +1514,8 @@ Independence between the ASIL B AIQL and the QM audio subsystem is required per 
 | ASIL decomposition scheme documented | Yes — Section 8.1 |
 | Independence of decomposed elements argued | Yes — Section 8.2 |
 | Common cause failure analysis performed | Yes — Section 8.2.3 |
-| Sufficient safety mechanisms in higher-ASIL element | Yes — 16 ASIL B TSRs + 1 QM TSR covering all data integrity failure modes (Section 7); classifier correctness addressed at system level |
-| QM element Assumptions of Use documented | Yes — Section 9 |
+| Sufficient safety mechanisms in higher-ASIL element | Yes — 20 TSRs (15 mandatory ASIL B + 5 optional ASIL B + 1 QM) covering all data integrity and diagnostic failure modes (Section 7); classifier correctness addressed at system level |
+| QM element Assumptions of Use documented | Yes — Section 9 (14 AoUs: 12 mandatory + 2 optional) |
 
 ---
 
@@ -1473,15 +1605,15 @@ The QM audio subsystem is treated as a Safety Element out of Context (SEooC) per
 | **TSR Dependency** | TSR-AIQL-005 |
 | **Verification of AoU** | Data format verification test; boundary value test at range limits |
 
-### AoU-009: In-Cabin Microphone Specifications
+### AoU-009: Exterior Microphone Specifications
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | AoU-009 |
-| **Assumption** | The in-cabin microphone array shall consist of at least 4 microphones mounted within the vehicle cabin with: (a) Sensitivity >= -38 dBV/Pa; (b) Signal-to-noise ratio >= 65 dB(A); (c) Frequency response covering 500 Hz to 3000 Hz (siren frequency range) with <= 3 dB variation; (d) Operating temperature range -40 C to +85 C; (e) Placement providing coverage of cabin acoustic space for BIST loopback reception (minimum 2 microphones with line-of-sight to at least one in-cabin speaker). |
-| **Rationale** | The siren classifier performance depends on adequate audio quality. In-cabin microphone placement means external siren audio is attenuated by cabin insulation (typically 20-30 dB); the microphone specifications must support detection of attenuated external sounds. Additionally, microphone placement must support BIST loopback verification by ensuring adequate acoustic coupling to in-cabin speakers. |
-| **TSR Dependency** | TSR-AIQL-005 (noise floor check), TSR-AIQL-016 (BIST spectral match) |
-| **Verification of AoU** | Microphone specification review; in-cabin acoustic characterization test; BIST loopback validation at design placement |
+| **Assumption** | The exterior microphone array shall consist of a minimum of 2 microphones (recommended 4+ for robust cross-mic plausibility coverage) mounted on the vehicle exterior with: (a) Sensitivity >= -38 dBV/Pa; (b) Signal-to-noise ratio >= 65 dB(A); (c) Frequency response covering 500 Hz to 3000 Hz (siren frequency range) with <= 3 dB variation; (d) Operating temperature range -40 C to +85 C; (e) Environmental protection rating IP67 or equivalent (dust-tight, protected against temporary immersion in water); (f) Placement on exterior body panels providing exposure to ambient acoustic environment for siren detection; (g) Mechanical protection against road debris, high-pressure wash, and ice accumulation. |
+| **Rationale** | Exterior microphone placement provides direct exposure to external siren audio without cabin insulation attenuation (previously estimated at 20-30 dB loss for in-cabin placement). Exterior mounting requires robust environmental protection (IP67) to withstand road spray, rain, temperature extremes, and debris. Minimum 2 microphones enables cross-mic plausibility checking (TSR-AIQL-021); 4+ microphones recommended for robust spatial coverage and tolerance of individual channel blockage/failure. |
+| **TSR Dependency** | TSR-AIQL-005 (noise floor check), TSR-AIQL-020 (noise profile monitoring), TSR-AIQL-021 (cross-mic plausibility), TSR-AIQL-022 (input sanitization) |
+| **Verification of AoU** | Microphone specification review; exterior environmental qualification test (IP67, temperature, vibration); acoustic characterization at mounting positions; cross-mic plausibility validation with minimum mic count |
 
 ### AoU-010: Self-Diagnostic Reporting
 
@@ -1493,42 +1625,64 @@ The QM audio subsystem is treated as a Safety Element out of Context (SEooC) per
 | **TSR Dependency** | TSR-AIQL-011 (diagnostic logging) |
 | **Verification of AoU** | Fault injection in QM subsystem; verify diagnostic byte correctly reports induced faults |
 
-### AoU-011: Speaker Availability and Specifications
+### AoU-011: Speaker Availability and Specifications (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | AoU-011 |
-| **Assumption** | The vehicle shall provide at least one in-cabin speaker available for BIST signal output with: (a) Frequency response covering 500 Hz to 3000 Hz; (b) Sound pressure level >= 70 dB SPL at microphone position when driven at -20 dBFS; (c) Total harmonic distortion (THD) < 5% within the BIST frequency range; (d) Speaker accessible via codec DAC interface without requiring entertainment system to be active. |
-| **Rationale** | The BIST loopback requires a speaker capable of reproducing the sine sweep test signal across the siren frequency range. The 70 dB SPL minimum ensures adequate SNR for spectral match verification against typical cabin ambient noise (40-60 dB SPL). The speaker must be independently addressable — BIST must function regardless of entertainment system state. |
-| **TSR Dependency** | TSR-AIQL-015 (BIST signal generation), TSR-AIQL-016 (BIST spectral match) |
-| **Verification of AoU** | Speaker specification review; acoustic output measurement at microphone positions; BIST signal reproduction quality test |
+| **Assumption** | **Optional — applies only when an exterior speaker is available on the vehicle platform for acoustic loopback BIST.** If provided, the vehicle shall have at least one exterior speaker (e.g., backup warning speaker, AVAS/pedestrian alerting speaker) available for BIST signal output with: (a) Frequency response covering 500 Hz to 3000 Hz; (b) Sound pressure level >= 70 dB SPL at nearest exterior microphone position when driven at -20 dBFS; (c) Total harmonic distortion (THD) < 5% within the BIST frequency range; (d) Speaker accessible via codec DAC interface without requiring other vehicle systems to be active. The Hyperion reference platform does not include an exterior speaker for BIST purposes; this AoU is for customer platforms that choose to implement acoustic loopback. |
+| **Rationale** | The acoustic loopback BIST requires a speaker capable of reproducing the sine sweep test signal across the siren frequency range. The 70 dB SPL minimum ensures adequate SNR for spectral match verification against typical ambient noise. The speaker must be independently addressable — BIST must function regardless of other vehicle system states. If no speaker is available, passive qualification checks (TSR-AIQL-020, -021, -022) provide the primary diagnostic approach. |
+| **TSR Dependency** | TSR-AIQL-015 (BIST signal generation — optional), TSR-AIQL-016 (BIST spectral match — optional) |
+| **Verification of AoU** | Speaker specification review; acoustic output measurement at exterior microphone positions; BIST signal reproduction quality test (when speaker is available) |
 
-### AoU-012: Speaker-to-Microphone Acoustic Coupling
+### AoU-012: Speaker-to-Microphone Acoustic Coupling (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | AoU-012 |
-| **Assumption** | The acoustic coupling between the BIST speaker and the in-cabin microphone array shall provide: (a) Signal-to-noise ratio >= 20 dB for the BIST signal at the microphone position under worst-case cabin ambient noise conditions (windows closed, HVAC maximum); (b) Frequency response variation <= 10 dB across 500-3000 Hz range for the speaker-to-microphone acoustic path; (c) Stable acoustic coupling (variation < 3 dB) across operating temperature range and normal cabin configurations. |
-| **Rationale** | The BIST spectral match algorithm (TSR-AIQL-016) requires sufficient SNR to distinguish the test signal from cabin noise. The 20 dB SNR minimum ensures reliable spectral correlation even in noisy cabin conditions. Frequency response and stability requirements ensure the BIST reference calibration remains valid across operating conditions. |
-| **TSR Dependency** | TSR-AIQL-016 (BIST spectral match), TSR-AIQL-018 (periodic BIST) |
-| **Verification of AoU** | In-cabin acoustic characterization; BIST SNR measurement across temperature and HVAC operating points; long-term stability validation |
+| **Assumption** | **Optional — applies only when an exterior speaker is available on the vehicle platform for acoustic loopback BIST.** The acoustic coupling between the BIST speaker and the exterior microphone array shall provide: (a) Signal-to-noise ratio >= 20 dB for the BIST signal at the nearest microphone position under worst-case ambient noise conditions (highway speed, wind noise); (b) Frequency response variation <= 10 dB across 500-3000 Hz range for the speaker-to-microphone acoustic path; (c) Stable acoustic coupling (variation < 3 dB) across operating temperature range and normal driving conditions. If no speaker is available, this AoU does not apply. |
+| **Rationale** | The BIST spectral match algorithm (TSR-AIQL-016) requires sufficient SNR to distinguish the test signal from ambient noise. The 20 dB SNR minimum ensures reliable spectral correlation even in noisy environmental conditions. Frequency response and stability requirements ensure the BIST reference calibration remains valid across operating conditions. This AoU is optional because the Hyperion reference platform does not include an exterior speaker. |
+| **TSR Dependency** | TSR-AIQL-016 (BIST spectral match — optional), TSR-AIQL-018 (periodic BIST — optional) |
+| **Verification of AoU** | Exterior acoustic characterization; BIST SNR measurement across temperature and ambient noise operating points; long-term stability validation (when speaker is available) |
+
+### AoU-013: A2B Frame Structure
+
+| Attribute | Value |
+|-----------|-------|
+| **ID** | AoU-013 |
+| **Assumption** | A2B audio frames delivered to Thor Main shall include the following fields for data integrity verification: (a) CRC — per AoU-001; (b) Alive counter — per AoU-004; (c) Sequence counter — per AoU-002; (d) Timestamp — per AoU-003. The A2B transceiver (Maarva, supporting up to 16 channels) shall preserve these fields without modification during transport from the codec to the Thor Main SoC. |
+| **Rationale** | The AIQL's data integrity checks (TSR-AIQL-001 through TSR-AIQL-004) depend on the A2B frame carrying integrity fields end-to-end from the audio codec/driver to the AIQL on Thor Main. If the A2B bus strips, reorders, or corrupts these fields, the AIQL cannot perform its safety function. This AoU consolidates the A2B-specific transport integrity assumptions in a single place. |
+| **TSR Dependency** | TSR-AIQL-001 (Freshness), TSR-AIQL-002 (Alive Counter), TSR-AIQL-003 (CRC-32), TSR-AIQL-004 (Sequence Counter) |
+| **Verification of AoU** | A2B frame structure specification review; integration test verifying end-to-end field integrity across A2B bus; confirm with systems engineering |
+
+### AoU-014: Microphone Quantity for Cross-Mic Plausibility
+
+| Attribute | Value |
+|-----------|-------|
+| **ID** | AoU-014 |
+| **Assumption** | The vehicle platform shall provide a minimum of 2 exterior microphones connected via the A2B path to enable cross-mic plausibility checking (TSR-AIQL-021). A minimum of 4 exterior microphones is recommended for robust cross-mic plausibility coverage (tolerance of single-channel failure without loss of plausibility checking capability). |
+| **Rationale** | Cross-mic plausibility (TSR-AIQL-021) compares RMS levels and spectral characteristics across microphone channels to detect individual channel faults. With only 1 microphone, no cross-comparison is possible and this safety mechanism is disabled (the AIQL falls back to noise profile monitoring and input sanitization only). With 2 microphones, a divergence is detectable but the algorithm cannot determine which channel is faulty without additional information. With 4+ microphones, majority-vote logic can identify and isolate the faulty channel while maintaining plausibility checking on the remaining channels. |
+| **TSR Dependency** | TSR-AIQL-021 (Cross-Mic Plausibility) |
+| **Verification of AoU** | Platform configuration review; verify minimum 2 mic channels present in A2B frame; cross-mic plausibility functional test with minimum and recommended mic counts |
 
 ### 9.1 AoU Summary Table
 
-| AoU ID | Short Name | TSR Dependency | Verification Method |
-|--------|-----------|----------------|---------------------|
-| AoU-001 | CRC-32 Generation | TSR-AIQL-003 | Unit test, integration test |
-| AoU-002 | Sequence Counter | TSR-AIQL-004 | Unit test, wraparound test |
-| AoU-003 | Timestamp | TSR-AIQL-001 | Accuracy measurement |
-| AoU-004 | Alive Counter | TSR-AIQL-002 | Unit test, stress test |
-| AoU-005 | Frame Rate | TSR-AIQL-001, TSR-AIQL-008, TSR-AIQL-009 | Long-duration measurement |
-| AoU-006 | Memory Isolation | TSR-AIQL-012 | MPU fault injection, static analysis |
-| AoU-007 | CPU Budget | TSR-AIQL-013 | WCET analysis, runtime monitoring |
-| AoU-008 | Signal Range | TSR-AIQL-005 | Format verification, boundary values |
-| AoU-009 | In-Cabin Microphone Specs | TSR-AIQL-005, TSR-AIQL-016 | Spec review, acoustic test, BIST validation |
-| AoU-010 | Self-Diagnostic | TSR-AIQL-011 | Fault injection |
-| AoU-011 | Speaker Availability | TSR-AIQL-015, TSR-AIQL-016 | Spec review, acoustic measurement |
-| AoU-012 | Acoustic Coupling | TSR-AIQL-016, TSR-AIQL-018 | Acoustic characterization, stability test |
+| AoU ID | Short Name | TSR Dependency | Verification Method | Status |
+|--------|-----------|----------------|---------------------|--------|
+| AoU-001 | CRC-32 Generation | TSR-AIQL-003 | Unit test, integration test | Mandatory |
+| AoU-002 | Sequence Counter | TSR-AIQL-004 | Unit test, wraparound test | Mandatory |
+| AoU-003 | Timestamp | TSR-AIQL-001 | Accuracy measurement | Mandatory |
+| AoU-004 | Alive Counter | TSR-AIQL-002 | Unit test, stress test | Mandatory |
+| AoU-005 | Frame Rate | TSR-AIQL-001, -008, -009 | Long-duration measurement | Mandatory |
+| AoU-006 | Memory Isolation | TSR-AIQL-012 | MPU fault injection, static analysis | Mandatory |
+| AoU-007 | CPU Budget | TSR-AIQL-013 | WCET analysis, runtime monitoring | Mandatory |
+| AoU-008 | Signal Range | TSR-AIQL-005 | Format verification, boundary values | Mandatory |
+| AoU-009 | Exterior Microphone Specs | TSR-AIQL-005, -020, -021, -022 | Spec review, env. qualification, acoustic test | Mandatory |
+| AoU-010 | Self-Diagnostic | TSR-AIQL-011 | Fault injection | Mandatory |
+| AoU-011 | Speaker Availability | TSR-AIQL-015, -016 | Spec review, acoustic measurement | **Optional** (customer-dependent) |
+| AoU-012 | Acoustic Coupling | TSR-AIQL-016, -018 | Acoustic characterization, stability test | **Optional** (customer-dependent) |
+| AoU-013 | A2B Frame Structure | TSR-AIQL-001, -002, -003, -004 | Spec review, integration test | Mandatory |
+| AoU-014 | Mic Quantity for Plausibility | TSR-AIQL-021 | Config review, functional test | Mandatory |
 
 ---
 
@@ -1558,8 +1712,9 @@ The AIQL maintains a qualification state machine that governs the safety status 
               +---------------|   (Safe State) |
               20 consecutive  +================+
               valid frames           |
-              (passive faults        | Confirmed BIST failure
-               only)                 | (retry exhaustion)
+              (passive faults        | Persistent qualification failure:
+               only)                 |  - Confirmed BIST failure (optional)
+                                     |  - Sustained NOT_QUALIFIED > 30 s
                                      v
                           +====================+
                           |  MRM_REQUESTED     |
@@ -1567,6 +1722,7 @@ The AIQL maintains a qualification state machine that governs the safety status 
                           +====================+
                            No automatic recovery
                            Requires system restart
+                           Safety status -> THOR FSI
 ```
 
 ### 10.2 State Definitions
@@ -1575,7 +1731,7 @@ The AIQL maintains a qualification state machine that governs the safety status 
 
 | Attribute | Value |
 |-----------|-------|
-| **Entry Condition** | All checks passing; sufficient consecutive valid frames received (10 from DEGRADED, 20 from NOT_QUALIFIED); startup BIST passed |
+| **Entry Condition** | All checks passing (data integrity + passive monitoring); sufficient consecutive valid frames received (10 from DEGRADED, 20 from NOT_QUALIFIED); startup BIST passed (if BIST enabled) or passive checks stable (if BIST not available) |
 | **Behavior** | Audio data and classifier output passed through to AMO with qualification_status = QUALIFIED |
 | **AMO Action** | Multi-sensor fusion with audio as supplementary input for emergency vehicle detection (nominal mode) |
 | **Output** | Full audio frame + classifier output + qualification_status = QUALIFIED |
@@ -1604,39 +1760,55 @@ The AIQL maintains a qualification state machine that governs the safety status 
 
 | Attribute | Value |
 |-----------|-------|
-| **Entry Condition** | Confirmed BIST failure: startup BIST fails 3 consecutive times (TSR-AIQL-017); periodic BIST fails 2 consecutive times (TSR-AIQL-019) |
-| **Behavior** | AIQL outputs NOT_QUALIFIED status with BIST failure flags; MRM request transmitted to vehicle safety manager; diagnostic log captures BIST failure details |
-| **AMO Action** | Audio excluded from fusion; vehicle safety manager initiates controlled stop (Minimal Risk Maneuver) |
-| **Output** | Zero-filled audio + zero-filled classifier + BIST failure flags + qualification_status = NOT_QUALIFIED + MRM request signal |
-| **Recovery** | **None** — MRM_REQUESTED is a terminal state. Recovery requires full system restart and successful startup BIST. This reflects the persistent nature of the underlying hardware or acoustic path failure. |
+| **Entry Condition** | Persistent qualification failure per TSR-AIQL-019: (i) Confirmed BIST failure (optional): startup 3 consecutive failures (TSR-AIQL-017), periodic 2 consecutive failures; (ii) Sustained NOT_QUALIFIED from passive checks for > 30 seconds (configurable), indicating structural audio path degradation |
+| **Behavior** | AIQL outputs NOT_QUALIFIED status with applicable failure flags; safety status transmitted to THOR FSI via SOC_Error / FSI_I2C; diagnostic log captures failure details |
+| **AMO Action** | Audio excluded from fusion; THOR FSI initiates controlled stop (Minimal Risk Maneuver) |
+| **Output** | Zero-filled audio + zero-filled classifier + failure flags + qualification_status = NOT_QUALIFIED + safety status to THOR FSI |
+| **Recovery** | **None** — MRM_REQUESTED is a terminal state. Recovery requires full system restart and successful qualification (BIST pass if speaker available, or sustained passive check pass). This reflects the persistent nature of the underlying hardware or environmental condition. |
 
 ### 10.3 Fallback and MRM Strategy
 
 When the AIQL enters a degraded or failed state, two distinct strategies apply depending on the failure type:
 
-| Aspect | Passive Fault (NOT_QUALIFIED) | BIST Failure (MRM_REQUESTED) |
+| Aspect | Transient Fault (NOT_QUALIFIED) | Persistent Failure (MRM_REQUESTED) |
 |--------|-------------------------------|------------------------------|
-| **Trigger** | Data integrity check failures (freshness, CRC, sequence, range, timeout) | Confirmed BIST loopback failure after retry exhaustion |
-| **Failure Nature** | Potentially transient (software glitch, scheduling issue, transient EMI) | Likely persistent (hardware degradation, acoustic path obstruction) |
-| **Vehicle Action** | Continue driving with primary sensors only; audio excluded from fusion | Controlled stop (MRM) — vehicle brought to safe standstill |
+| **Trigger** | Data integrity or passive check failures (freshness, CRC, sequence, range, noise profile, cross-mic, timeout) | Confirmed BIST failure (if BIST enabled) after retry exhaustion; OR sustained NOT_QUALIFIED > 30 s from passive checks |
+| **Failure Nature** | Potentially transient (software glitch, scheduling issue, transient EMI, brief blockage) | Likely persistent (hardware degradation, mic blockage by ice/mud, wiring fault, environmental damage) |
+| **Vehicle Action** | Continue driving with primary sensors only; audio excluded from fusion | Controlled stop (MRM) via THOR FSI — vehicle brought to safe standstill |
 | **Detection Sources** | Camera, LiDAR, radar continue nominal operation | Camera, LiDAR, radar continue during MRM maneuver |
-| **Recovery** | Automatic — AIQL recovers when 20 consecutive valid frames received | Manual — requires system restart and successful startup BIST |
-| **Justification** | Audio is a secondary sensor; transient loss is tolerable with primary sensors active | BIST failure indicates structural audio path degradation; continued operation violates safety concept assumptions |
+| **Recovery** | Automatic — AIQL recovers when 20 consecutive valid frames received | Manual — requires system restart and successful qualification |
+| **Justification** | Audio is a secondary sensor; transient loss is tolerable with primary sensors active | Persistent failure indicates structural audio path degradation; continued operation violates safety concept assumptions |
 | **Duration** | Until recovery or end of drive cycle | Until vehicle stops and system is restarted |
-| **Driver Notification** | HMI: "Audio detection system degraded" | HMI: "Audio system fault — vehicle stopping" |
+| **Safety Signaling** | Qualification status in output frame to AMO | Safety status to THOR FSI via SOC_Error / FSI_I2C |
+| **HMI Notification** | "Audio detection system degraded" | "Audio system fault — vehicle stopping" |
 
-**BIST Failure-to-MRM Timing Budget**:
+**Persistent Failure-to-MRM Timing Budget**:
+
+BIST path (optional, customer-dependent):
 
 | Phase | Duration | Running Total | Activity |
 |-------|----------|---------------|----------|
 | BIST failure detected | 0 ms | 0 ms | Periodic BIST spectral match fails |
 | First retry | ~250 ms | 250 ms | Abbreviated sweep (200 ms) + analysis (50 ms) |
 | Second retry | ~250 ms | 500 ms | Abbreviated sweep (200 ms) + analysis (50 ms) |
-| MRM request transmitted | <= 100 ms | 600 ms | AIQL sends MRM to vehicle safety manager |
-| Vehicle safety manager processing | <= 200 ms | 800 ms | MRM path planning initiated |
+| Safety status to THOR FSI | <= 100 ms | 600 ms | AIQL sends MRM via SOC_Error / FSI_I2C |
+| THOR FSI processing | <= 200 ms | 800 ms | MRM path planning initiated |
 | Vehicle deceleration begins | <= 200 ms | 1000 ms | Brake application starts |
 | Vehicle stop (from 60 km/h) | ~30000 ms | ~31000 ms | Controlled deceleration to standstill |
-| **Total: fault to vehicle stop** | | **~31 seconds** | |
+| **Total: BIST fault to vehicle stop** | | **~31 seconds** | |
+
+Passive check path (all platforms):
+
+| Phase | Duration | Running Total | Activity |
+|-------|----------|---------------|----------|
+| Passive check failure detected | 0 ms | 0 ms | Noise profile / cross-mic / sanitization fails |
+| Transition to NOT_QUALIFIED | <= 200 ms | 200 ms | State machine transitions after consecutive failures |
+| Sustained NOT_QUALIFIED timer | 30000 ms | 30200 ms | Configurable timeout without recovery |
+| Safety status to THOR FSI | <= 100 ms | 30300 ms | AIQL sends MRM via SOC_Error / FSI_I2C |
+| THOR FSI processing | <= 200 ms | 30500 ms | MRM path planning initiated |
+| Vehicle deceleration begins | <= 200 ms | 30700 ms | Brake application starts |
+| Vehicle stop (from 60 km/h) | ~30000 ms | ~60700 ms | Controlled deceleration to standstill |
+| **Total: passive fault to vehicle stop** | | **~61 seconds** | |
 
 ### 10.4 FTTI Budget Allocation
 
@@ -1783,86 +1955,128 @@ The following fault injection tests verify that the AIQL correctly detects and h
 | **Pass Criteria** | Watchdog triggers within 100 ms of AIQL execution starvation; NOT_QUALIFIED output asserted within 150 ms of starvation onset; system diagnostic event logged; AIQL recovers after starvation removed |
 | **Test Count** | 8 test cases (4 injection types x 2 severity levels) |
 
-#### FI-10: Speaker Failure Injection
+#### FI-10: Speaker Failure Injection (Optional, Customer-Dependent)
+
+**Note**: FI-10 through FI-14 are only applicable when acoustic loopback BIST is enabled (exterior speaker available). For the Hyperion reference platform (no speaker), these tests are not required.
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | FI-10 |
 | **Objective** | Verify AIQL detects speaker subsystem failures preventing BIST execution |
-| **Failure Modes** | FM-09 (Speaker Subsystem Failure) |
-| **TSRs Verified** | TSR-AIQL-015 (BIST Signal Generation), TSR-AIQL-019 (MRM on BIST Failure) |
+| **Failure Modes** | FM-09 (Speaker Subsystem Failure — optional) |
+| **TSRs Verified** | TSR-AIQL-015 (BIST Signal Generation — optional), TSR-AIQL-019 (MRM on Persistent Failure) |
 | **Injection Method** | (a) Disconnect speaker output (open circuit); (b) Short speaker output; (c) Disable codec DAC; (d) Corrupt BIST signal output (inject noise) |
 | **Pass Criteria** | FF_BIST_SPEAKER set within BIST timeout; MRM requested after retry exhaustion; no false speaker failure flags during normal operation |
 | **Test Count** | 8 test cases (4 injection types x 2 BIST phases: startup, periodic) |
 
-#### FI-11: Spectral Match Degradation
+#### FI-11: Spectral Match Degradation (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | FI-11 |
 | **Objective** | Verify AIQL detects acoustic coupling degradation via BIST spectral match |
-| **Failure Modes** | FM-10 (Acoustic Coupling Degradation) |
-| **TSRs Verified** | TSR-AIQL-016 (BIST Spectral Match Verification) |
+| **Failure Modes** | FM-10 (Acoustic Coupling Degradation — optional) |
+| **TSRs Verified** | TSR-AIQL-016 (BIST Spectral Match Verification — optional) |
 | **Injection Method** | (a) Attenuate received signal by 10 dB, 20 dB, 30 dB (gradual mic sensitivity loss); (b) Notch filter at 1 kHz, 2 kHz (frequency-selective fault); (c) Add broadband noise at varying SNR levels; (d) Phase shift received signal (acoustic path change) |
 | **Pass Criteria** | FF_BIST_COUPLING set when correlation < 0.85 or amplitude deviation > +/- 6 dB; correct pass for signals within tolerance; threshold behavior verified at boundary |
 | **Test Count** | 12 test cases (4 injection types x 3 severity levels) |
 
-#### FI-12: Startup BIST Blocking
+#### FI-12: Startup BIST Blocking (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | FI-12 |
 | **Objective** | Verify AIQL blocks QUALIFIED transition until startup BIST passes |
-| **Failure Modes** | FM-09 (Speaker Failure), FM-10 (Coupling Degradation) |
-| **TSRs Verified** | TSR-AIQL-017 (Startup BIST Precondition) |
+| **Failure Modes** | FM-09 (Speaker Failure — optional), FM-10 (Coupling Degradation — optional) |
+| **TSRs Verified** | TSR-AIQL-017 (Startup BIST Precondition — optional) |
 | **Injection Method** | (a) Fail startup BIST 1 time then pass (verify retry); (b) Fail startup BIST 2 times then pass; (c) Fail startup BIST 3 times (verify MRM request); (d) Inject transient noise during startup BIST |
 | **Pass Criteria** | No QUALIFIED transition without BIST pass; correct retry count (up to 3); MRM requested after 3 consecutive failures; total startup time within budget |
 | **Test Count** | 8 test cases (4 injection types x 2 failure patterns) |
 
-#### FI-13: Periodic BIST During Driving
+#### FI-13: Periodic BIST During Driving (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | FI-13 |
 | **Objective** | Verify periodic BIST execution and signal cancellation during QUALIFIED operation |
-| **Failure Modes** | FM-10 (Coupling Degradation), FM-11 (BIST False Failure) |
-| **TSRs Verified** | TSR-AIQL-018 (Periodic BIST Scheduling) |
-| **Injection Method** | (a) Inject cabin noise at various levels during periodic BIST; (b) Degrade acoustic coupling mid-drive; (c) Verify signal cancellation by monitoring AMO input during BIST; (d) Verify BIST interval timing under various system loads |
+| **Failure Modes** | FM-10 (Coupling Degradation — optional), FM-11 (BIST False Failure — optional) |
+| **TSRs Verified** | TSR-AIQL-018 (Periodic BIST Scheduling — optional) |
+| **Injection Method** | (a) Inject environmental noise at various levels during periodic BIST; (b) Degrade acoustic coupling mid-drive; (c) Verify signal cancellation by monitoring AMO input during BIST; (d) Verify BIST interval timing under various system loads |
 | **Pass Criteria** | Periodic BIST executes within +/- 5 seconds of 60-second interval; signal cancellation >= 30 dB; no false siren detections during BIST window; correct failure detection when coupling degrades |
 | **Test Count** | 12 test cases (4 injection types x 3 operating conditions) |
 
-#### FI-14: BIST-Triggered MRM
+#### FI-14: BIST-Triggered MRM (Optional, Customer-Dependent)
 
 | Attribute | Value |
 |-----------|-------|
 | **ID** | FI-14 |
 | **Objective** | Verify AIQL correctly requests MRM on confirmed BIST failure and enters terminal state |
-| **Failure Modes** | FM-09 (Speaker Failure), FM-10 (Coupling Degradation) |
-| **TSRs Verified** | TSR-AIQL-019 (MRM Transition on Confirmed BIST Failure) |
+| **Failure Modes** | FM-09 (Speaker Failure — optional), FM-10 (Coupling Degradation — optional) |
+| **TSRs Verified** | TSR-AIQL-019 (MRM Transition on Persistent Qualification Failure) |
 | **Injection Method** | (a) Persistent speaker failure during periodic BIST (2 retries then MRM); (b) Persistent coupling degradation during periodic BIST; (c) Verify MRM_REQUESTED is terminal (no recovery without restart); (d) Verify MRM request timing (within 500 ms of confirmed failure); (e) Verify MRM during startup BIST (3 retries then MRM) |
 | **Pass Criteria** | MRM requested after exactly 2 periodic retries or 3 startup retries; MRM request within 500 ms; MRM_REQUESTED state is terminal; diagnostic log contains BIST failure details |
 | **Test Count** | 10 test cases (5 injection types x 2 BIST phases) |
 
+#### FI-15: Noise Profile Anomaly Injection
+
+| Attribute | Value |
+|-----------|-------|
+| **ID** | FI-15 |
+| **Objective** | Verify AIQL noise profile monitoring detects microphone health anomalies |
+| **Failure Modes** | FM-01 (Loss — silence), FM-04 (Out-of-Range — DC rail, saturation), FM-12 (Mic Blockage) |
+| **TSRs Verified** | TSR-AIQL-020 (Noise Profile Monitoring), TSR-AIQL-022 (Input Sanitization) |
+| **Injection Method** | (a) Inject silence (zero samples) on individual channels; (b) Inject DC rail (samples near +32767 or -32768); (c) Inject persistent saturation (>10% of samples clipped for 5+ consecutive frames); (d) Inject abnormal spectral content (pure tone, white noise at unexpected level); (e) Inject gradually decreasing noise floor (simulating slow mic degradation) |
+| **Pass Criteria** | FF_NOISE_PROFILE set within 3 frames (150 ms) for silence, DC rail, and persistent saturation; abnormal spectral detection within 10 frames (500 ms); correct channel identification; no false alerts during nominal driving with ambient noise > 50 dB(A); zero-fill and NOT_QUALIFIED for failed frames per TSR-AIQL-022 |
+| **Test Count** | 10 test cases (5 injection types x 2 severity levels) |
+
+#### FI-16: Cross-Mic Divergence Injection
+
+| Attribute | Value |
+|-----------|-------|
+| **ID** | FI-16 |
+| **Objective** | Verify AIQL cross-mic plausibility detects individual channel divergence from peers |
+| **Failure Modes** | FM-12 (Mic Blockage — localized), FM-13 (Cross-Mic Plausibility Failure) |
+| **TSRs Verified** | TSR-AIQL-021 (Cross-Microphone Plausibility) |
+| **Injection Method** | (a) Attenuate single channel by 15 dB, 20 dB, 30 dB (simulating partial blockage or sensitivity loss); (b) Inject noise on single channel while peers are nominal; (c) Inject silence on single channel while peers are nominal; (d) Inject gradual divergence (1 dB/minute drift on one channel) |
+| **Pass Criteria** | FF_CROSSMIC set within 2 frames (100 ms) for divergence exceeding threshold (default: 12 dB from median); correct identification of divergent channel; no false alerts for nominal multi-channel audio with directional sound sources or natural inter-channel variation |
+| **Test Count** | 8 test cases (4 injection types x 2 channel configurations: 2-mic, 4-mic) |
+
+#### FI-17: Exterior Mic Blockage Simulation
+
+| Attribute | Value |
+|-----------|-------|
+| **ID** | FI-17 |
+| **Objective** | Verify AIQL detects simulated exterior microphone blockage conditions |
+| **Failure Modes** | FM-12 (Mic Blockage/Environmental Damage) |
+| **TSRs Verified** | TSR-AIQL-020 (Noise Profile), TSR-AIQL-021 (Cross-Mic Plausibility), TSR-AIQL-022 (Input Sanitization) |
+| **Injection Method** | (a) Attenuate signal by 20 dB on single channel (simulating mud/ice covering mic port); (b) Apply low-pass filter at 500 Hz on single channel (simulating water ingress altering frequency response); (c) Attenuate all channels simultaneously by 15 dB (simulating vehicle-wide environmental event, e.g., heavy ice accumulation); (d) Intermittent signal dropout on single channel (simulating loose connector due to vibration/thermal cycling) |
+| **Pass Criteria** | Single-channel blockage detected by cross-mic plausibility within 2 frames; all-channel blockage detected by noise profile monitoring within 3 frames; correct state transition to DEGRADED (single channel) or NOT_QUALIFIED (all channels); intermittent dropout causes DEGRADED state with recovery when signal returns |
+| **Test Count** | 6 test cases (4 injection types + 2 multi-channel scenarios) |
+
 ### 11.4 Fault Injection Campaign Summary
 
-| FI ID | Failure Modes | TSRs Verified | Test Count | Level |
-|-------|---------------|---------------|------------|-------|
-| FI-01 | FM-01, FM-03 | TSR-AIQL-001, -002 | 12 | HiL |
-| FI-02 | FM-03 | TSR-AIQL-001 | 8 | HiL |
-| FI-03 | FM-02 | TSR-AIQL-003 | 20 | HiL |
-| FI-04 | FM-07 | TSR-AIQL-004 | 10 | HiL |
-| FI-05 | FM-04 | TSR-AIQL-005 | 18 | HiL |
-| FI-07 | All (data integrity) | TSR-AIQL-007, -008 | 15 | HiL |
-| FI-08 | FM-08 | TSR-AIQL-012 | 8 | HiL |
-| FI-09 | FM-08 | TSR-AIQL-013 | 8 | HiL |
-| FI-10 | FM-09 | TSR-AIQL-015, -019 | 8 | HiL |
-| FI-11 | FM-10 | TSR-AIQL-016 | 12 | HiL |
-| FI-12 | FM-09, FM-10 | TSR-AIQL-017 | 8 | HiL |
-| FI-13 | FM-10, FM-11 | TSR-AIQL-018 | 12 | HiL |
-| FI-14 | FM-09, FM-10 | TSR-AIQL-019 | 10 | HiL |
-| **Total** | | | **149** | |
+| FI ID | Failure Modes | TSRs Verified | Test Count | Level | Status |
+|-------|---------------|---------------|------------|-------|--------|
+| FI-01 | FM-01, FM-03 | TSR-AIQL-001, -002 | 12 | HiL | Mandatory |
+| FI-02 | FM-03 | TSR-AIQL-001 | 8 | HiL | Mandatory |
+| FI-03 | FM-02 | TSR-AIQL-003 | 20 | HiL | Mandatory |
+| FI-04 | FM-07 | TSR-AIQL-004 | 10 | HiL | Mandatory |
+| FI-05 | FM-04 | TSR-AIQL-005 | 18 | HiL | Mandatory |
+| FI-07 | All (data integrity) | TSR-AIQL-007, -008 | 15 | HiL | Mandatory |
+| FI-08 | FM-08 | TSR-AIQL-012 | 8 | HiL | Mandatory |
+| FI-09 | FM-08 | TSR-AIQL-013 | 8 | HiL | Mandatory |
+| FI-10 | FM-09 | TSR-AIQL-015, -019 | 8 | HiL | **Optional** (customer-dependent) |
+| FI-11 | FM-10 | TSR-AIQL-016 | 12 | HiL | **Optional** (customer-dependent) |
+| FI-12 | FM-09, FM-10 | TSR-AIQL-017 | 8 | HiL | **Optional** (customer-dependent) |
+| FI-13 | FM-10, FM-11 | TSR-AIQL-018 | 12 | HiL | **Optional** (customer-dependent) |
+| FI-14 | FM-09, FM-10 | TSR-AIQL-019 | 10 | HiL | **Optional** (customer-dependent) |
+| FI-15 | FM-01, FM-04, FM-12 | TSR-AIQL-020, -022 | 10 | HiL | Mandatory |
+| FI-16 | FM-12, FM-13 | TSR-AIQL-021 | 8 | HiL | Mandatory |
+| FI-17 | FM-12 | TSR-AIQL-020, -021, -022 | 6 | HiL | Mandatory |
+| **Total (mandatory)** | | | **123** | | |
+| **Total (with optional BIST)** | | | **173** | | |
 
-**Note**: FM-05 (False Negative) and FM-06 (False Positive) are classifier performance limitations addressed at the system level by AMO multi-sensor fusion with primary sensors. They are not covered by the AIQL fault injection campaign.
+**Note**: FM-05 (False Negative) and FM-06 (False Positive) are classifier performance limitations addressed at the system level by AMO multi-sensor fusion with primary sensors. They are not covered by the AIQL fault injection campaign. FI-10 through FI-14 are only required for customer platforms that implement acoustic loopback BIST (exterior speaker available). FI-15 through FI-17 cover the new passive qualification checks (noise profile, cross-mic plausibility, exterior mic blockage) that serve as the primary diagnostic approach for all platforms.
 
 ### 11.5 ASIL B Process Compliance Work Products
 
@@ -1922,41 +2136,43 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | **AIQL Response** | AIQL cannot detect Doppler-related misclassification — this is a classifier performance limitation, not a data integrity failure. Diagnostic logging (TSR-AIQL-011) captures events for post-drive analysis. |
 | **Residual Risk** | Low — audio is a secondary sensor. Doppler shift at typical urban speeds (< 60 km/h relative) is < 5%, well within siren wail sweep range. Primary sensors unaffected by acoustic Doppler. |
 
-### TC-AUDIO-04: In-Cabin Microphone Acoustic Attenuation
+### TC-AUDIO-04: Exterior Microphone Environmental Exposure
 
 | Attribute | Value |
 |-----------|-------|
-| **Triggering Condition** | Vehicle cabin acoustic insulation (windows closed, premium sound deadening, active noise cancellation) attenuates external siren sound before reaching in-cabin microphones by 20-30 dB |
-| **Functional Insufficiency** | In-cabin microphone placement inherently reduces external siren SNR compared to exterior mounting; cabin insulation acts as a low-pass filter attenuating high-frequency siren harmonics |
-| **Hazardous Behavior** | Reduced siren detection range — emergency vehicle must be significantly closer before detection occurs, reducing available yielding time |
-| **Scenario** | Premium vehicle with laminated acoustic glass and ANC active; windows closed; exterior siren at 200 m (siren source at 123 dB(A) at 1 m, attenuated to ~70 dB(A) at 200 m in free field); cabin insulation attenuates by 25 dB to ~45 dB(A) at in-cabin microphone; cabin ambient noise at 50 dB(A) — siren SNR is negative, detection not possible until closer range |
-| **Risk Reduction** | **System-level mitigation**: Primary sensors (camera, LiDAR, radar) detect emergency vehicles by visual/shape/motion characteristics unaffected by cabin acoustic insulation. AoU-009 specifies minimum in-cabin microphone sensitivity and SNR. BIST verifies the acoustic-to-digital path integrity but cannot compensate for cabin attenuation of external sounds (BIST verifies the internal speaker-to-mic path, not the external sound-to-mic path). Classifier may require training specifically for attenuated in-cabin siren profiles. |
-| **AIQL Response** | AIQL cannot distinguish low-amplitude attenuated siren from genuine absence of siren. BIST confirms the audio path hardware is functional; the attenuation is an inherent physical characteristic of in-cabin placement, not a fault. Range validation (TSR-AIQL-005) noise floor check verifies microphone connectivity but not external sound coupling. |
-| **Residual Risk** | **Medium** — audio is a secondary sensor, but in-cabin placement significantly reduces the effective siren detection range compared to exterior mounting. Detection range reduction estimated at 50-70% (from ~200 m to ~60-100 m for typical siren). Primary sensors mitigate but the reduced audio early-warning capability is a meaningful loss in scenarios where audio would have provided first detection (e.g., emergency vehicle behind visual obstruction). This residual risk is accepted because: (1) primary sensors maintain independent detection capability; (2) in-cabin placement enables BIST verification not possible with exterior microphones; (3) in-cabin placement eliminates weather/road noise exposure issues. |
+| **Triggering Condition** | Exterior microphones are exposed to wind noise, road spray, debris impact, temperature extremes, and vehicle-speed-dependent aerodynamic noise that may mask or distort external siren audio |
+| **Functional Insufficiency** | Exterior microphone placement provides direct siren exposure but introduces environmental noise sources absent with in-cabin mounting: wind noise increases with vehicle speed (typically 60-80 dB(A) at highway speed); road spray and debris may temporarily attenuate or block microphone ports; temperature extremes may affect microphone sensitivity |
+| **Hazardous Behavior** | Reduced siren detection range at high vehicle speeds due to wind/road noise masking; temporary loss of siren detection during adverse weather (heavy rain, ice accumulation, road spray). Siren detection range affected by vehicle speed and ambient noise. |
+| **Scenario** | Highway driving at 130 km/h with rain; wind noise at 75 dB(A) at microphone positions; road spray intermittently coating mic ports; exterior siren at 200 m (siren source at 123 dB(A) at 1 m, attenuated to ~70 dB(A) at 200 m in free field); wind noise reduces effective siren SNR to ~-5 dB at 200 m — detection range reduced until siren is closer |
+| **Risk Reduction** | **System-level mitigation**: Primary sensors (camera, LiDAR, radar) detect emergency vehicles by visual/shape/motion characteristics unaffected by acoustic environmental exposure. AoU-009 specifies IP67 environmental protection for exterior mics. Noise profile monitoring (TSR-AIQL-020) detects blocked or degraded microphones. Cross-mic plausibility (TSR-AIQL-021) identifies individual mic channel degradation. Exterior placement eliminates the 20-30 dB cabin insulation attenuation that was the primary limitation of in-cabin placement (TC-AUDIO-04 v0.8), significantly improving effective siren detection range in normal conditions. |
+| **AIQL Response** | Noise profile monitoring (TSR-AIQL-020) detects if environmental conditions cause mic anomalies (silence from blockage, saturation from wind gust). Cross-mic plausibility (TSR-AIQL-021) detects if individual mics are affected while others remain functional. Input sanitization (TSR-AIQL-022) prevents environmentally degraded audio from reaching AMO in a QUALIFIED state. AIQL transitions to DEGRADED or NOT_QUALIFIED if persistent environmental degradation is detected. |
+| **Residual Risk** | **Low-Medium** — exterior placement significantly improves siren detection range vs. in-cabin placement (elimination of 20-30 dB cabin attenuation). However, high-speed wind noise introduces a speed-dependent detection range reduction. Detection range at 130 km/h estimated at ~100-150 m (vs. ~60-100 m for in-cabin at any speed). Primary sensors maintain full emergency vehicle detection capability regardless of acoustic conditions. The trade-off (exterior exposure vs. direct acoustic access) is favorable for siren detection performance. |
 
-### TC-AUDIO-05: BIST Cabin Noise Interference
+### TC-AUDIO-05: Acoustic Loopback Environmental Noise Interference (Customer-Dependent)
+
+**Note**: This triggering condition only applies when acoustic loopback BIST is enabled (exterior speaker available on the vehicle platform). If no speaker is present, BIST is not executed and this TC does not apply. For platforms without BIST, continuous passive monitoring (noise profile, cross-mic plausibility) provides ongoing diagnostic coverage without injecting a test signal, avoiding this category of false failure entirely.
 
 | Attribute | Value |
 |-----------|-------|
-| **Triggering Condition** | High cabin noise during BIST window (music playback, passenger conversation, HVAC at maximum, road noise on rough surface) masks the BIST reference signal at microphones |
-| **Functional Insufficiency** | BIST spectral match algorithm cannot reliably distinguish BIST signal from high-level cabin noise when SNR < 10 dB |
+| **Triggering Condition** | High environmental noise during BIST window (wind noise at speed, traffic noise, construction, heavy rain) masks the BIST reference signal at exterior microphones |
+| **Functional Insufficiency** | BIST spectral match algorithm cannot reliably distinguish BIST signal from high-level environmental noise when SNR < 10 dB |
 | **Hazardous Behavior** | False BIST failure triggers unnecessary MRM — availability impact (vehicle performs controlled stop when audio path is actually functional) |
-| **Scenario** | Periodic BIST executes during highway driving; passengers playing music at 85 dB(A) via in-cabin speakers; BIST signal at -20 dBFS produces ~70 dB SPL at microphone; music energy in BIST frequency range masks the sweep signal; spectral correlation drops below 0.85 threshold |
-| **Risk Reduction** | Retry mechanism (TSR-AIQL-019) — 2 retries for periodic BIST reduce false failure probability (noise conditions likely to change between retries). BIST signal level (-20 dBFS) designed to exceed typical cabin noise. Future enhancement: BIST scheduling could avoid windows with detected high ambient noise (see OI-14). Signal cancellation technique (TSR-AIQL-018) partially mitigates by subtracting known BIST signal before spectral analysis. |
+| **Scenario** | Periodic BIST executes during highway driving at 120 km/h; wind noise at 75 dB(A) at exterior mic positions; BIST signal at -20 dBFS produces ~70 dB SPL at nearest microphone; wind energy in BIST frequency range masks the sweep signal; spectral correlation drops below 0.85 threshold |
+| **Risk Reduction** | Retry mechanism (TSR-AIQL-019) — 2 retries for periodic BIST reduce false failure probability (noise conditions likely to change between retries). BIST signal level (-20 dBFS) designed to exceed typical ambient noise at microphone positions. Future enhancement: BIST scheduling could avoid windows with detected high ambient noise (see OI-14). Signal cancellation technique (TSR-AIQL-018) partially mitigates by subtracting known BIST signal before spectral analysis. |
 | **AIQL Response** | If noise causes BIST failure, retry mechanism provides second chance. If both retries fail, MRM is requested — this is a conservative (safe) response. The false MRM rate is an availability concern, not a safety concern. |
-| **Residual Risk** | Low for safety (false MRM is safe, not hazardous). **Medium for availability** — false BIST failures reduce system uptime. Target: false BIST failure rate < 1 per 1000 driving hours (see OI-11). |
+| **Residual Risk** | Low for safety (false MRM is safe, not hazardous). **Medium for availability** — false BIST failures reduce system uptime. Target: false BIST failure rate < 1 per 1000 driving hours (see OI-11). This risk only applies to customer platforms that implement acoustic loopback; the Hyperion reference platform avoids this risk entirely by relying on passive qualification checks. |
 
 ### 12.1 SOTIF Summary
 
 | TC ID | Triggering Condition | Primary Mitigation | AIQL Mechanism | Residual Risk |
 |-------|---------------------|-------------------|----------------|---------------|
-| TC-AUDIO-01 | Ambient noise masking | Primary sensors (system-level) | TSR-AIQL-005 (saturation detection) | Low |
+| TC-AUDIO-01 | Ambient noise masking | Primary sensors (system-level) | TSR-AIQL-005 (saturation detection), TSR-AIQL-020 (noise profile) | Low |
 | TC-AUDIO-02 | Siren-like sounds | Primary sensors + fusion weighting (system-level) | None (classifier performance) | Low |
 | TC-AUDIO-03 | Doppler shift | Primary sensors (system-level) | None (classifier performance) | Low |
-| TC-AUDIO-04 | In-cabin mic attenuation | Primary sensors + in-cabin mic specs | AoU-009, BIST (path verification only) | Medium |
-| TC-AUDIO-05 | BIST cabin noise interference | Retry mechanism + signal level design | TSR-AIQL-019 (retries), TSR-AIQL-018 (cancellation) | Low (safety) / Medium (availability) |
+| TC-AUDIO-04 | Exterior mic environmental exposure | Primary sensors + exterior mic specs (IP67) | AoU-009, TSR-AIQL-020 (noise profile), TSR-AIQL-021 (cross-mic) | Low-Medium |
+| TC-AUDIO-05 | Acoustic loopback env. noise interference | Retry mechanism + signal level design | TSR-AIQL-019 (retries), TSR-AIQL-018 (cancellation) | Low (safety) / Medium (availability) — **customer-dependent** |
 
-**Key insight**: Because audio is a secondary sensor, SOTIF triggering conditions TC-AUDIO-01 through TC-AUDIO-03 have **low residual risk** — primary sensors (camera, LiDAR, radar) maintain full emergency vehicle detection capability regardless of audio performance limitations. TC-AUDIO-04 is elevated to **medium residual risk** because in-cabin microphone placement inherently attenuates external siren audio by 20-30 dB, significantly reducing the effective detection range; this trade-off is accepted because in-cabin placement enables BIST-based audio path verification and eliminates exterior mounting challenges. TC-AUDIO-05 represents an availability concern (false BIST failures) rather than a safety concern, with medium availability risk managed by retry logic and BIST signal design. The AIQL's scope remains limited to data integrity qualification and BIST-based path verification at the I/O boundary; classifier performance limitations are addressed at the system level by AMO multi-sensor fusion architecture.
+**Key insight**: Because audio is a secondary sensor, SOTIF triggering conditions TC-AUDIO-01 through TC-AUDIO-03 have **low residual risk** — primary sensors (camera, LiDAR, radar) maintain full emergency vehicle detection capability regardless of audio performance limitations. TC-AUDIO-04 is updated to reflect exterior microphone placement (v0.9): exterior mounting eliminates the 20-30 dB cabin insulation attenuation that was the primary limitation in previous versions, significantly improving effective siren detection range. The residual risk is reduced from Medium to **Low-Medium** because the primary concern shifts from cabin attenuation (inherent, unavoidable) to speed-dependent wind noise (mitigable by mic shielding design and detectable by noise profile monitoring). TC-AUDIO-05 is now **customer-dependent** — it only applies when acoustic loopback BIST is enabled with an exterior speaker. For the Hyperion reference platform (no exterior speaker), this TC does not apply; passive qualification checks avoid BIST false failure entirely. The AIQL's scope remains limited to data integrity qualification and passive/active path verification at the I/O boundary; classifier performance limitations are addressed at the system level by AMO multi-sensor fusion architecture.
 
 ---
 
@@ -1964,19 +2180,21 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 
 ### 13.1 Safety Goal → Failure Mode → TSR Traceability
 
-| Safety Goal | Failure Mode | TSR(s) | Verification |
-|------------|-------------|--------|-------------|
-| SG-EMV-01 | FM-01: Complete Loss | TSR-AIQL-001, TSR-AIQL-002, TSR-AIQL-007, TSR-AIQL-016 | FI-01 |
-| SG-EMV-01 | FM-02: Corruption | TSR-AIQL-003, TSR-AIQL-005, TSR-AIQL-007 | FI-03 |
-| SG-EMV-01 | FM-03: Staleness | TSR-AIQL-001, TSR-AIQL-002, TSR-AIQL-004, TSR-AIQL-007 | FI-01, FI-02 |
-| SG-EMV-01 | FM-04: Out-of-Range | TSR-AIQL-005, TSR-AIQL-016 | FI-05 |
-| SG-EMV-01 | FM-05: False Negative | — (system-level: AMO multi-sensor fusion) | — (system-level verification) |
-| SG-EMV-01 | FM-06: False Positive | — (system-level: AMO multi-sensor fusion) | — (system-level verification) |
-| SG-EMV-01 | FM-07: Sequence Disorder | TSR-AIQL-004 | FI-04 |
-| SG-EMV-01 | FM-08: Common Cause | TSR-AIQL-012, TSR-AIQL-013, TSR-AIQL-007 | FI-07 |
-| SG-EMV-01 | FM-09: Speaker Failure | TSR-AIQL-015, TSR-AIQL-019, TSR-AIQL-007 | FI-10 |
-| SG-EMV-01 | FM-10: Coupling Degradation | TSR-AIQL-016, TSR-AIQL-019, TSR-AIQL-007 | FI-11 |
-| SG-EMV-01 | FM-11: BIST False Failure | TSR-AIQL-018, TSR-AIQL-019 | FI-13 |
+| Safety Goal | Failure Mode | TSR(s) | Verification | Status |
+|------------|-------------|--------|-------------|--------|
+| SG-EMV-01 | FM-01: Complete Loss | TSR-AIQL-001, -002, -007, -016 (opt), -020, -021 | FI-01, FI-15 | Mandatory |
+| SG-EMV-01 | FM-02: Corruption | TSR-AIQL-003, -005, -007 | FI-03 | Mandatory |
+| SG-EMV-01 | FM-03: Staleness | TSR-AIQL-001, -002, -004, -007 | FI-01, FI-02 | Mandatory |
+| SG-EMV-01 | FM-04: Out-of-Range | TSR-AIQL-005, -016 (opt), -020, -021, -022 | FI-05, FI-15, FI-16 | Mandatory |
+| SG-EMV-01 | FM-05: False Negative | — (system-level: AMO multi-sensor fusion) | — (system-level) | — |
+| SG-EMV-01 | FM-06: False Positive | — (system-level: AMO multi-sensor fusion) | — (system-level) | — |
+| SG-EMV-01 | FM-07: Sequence Disorder | TSR-AIQL-004 | FI-04 | Mandatory |
+| SG-EMV-01 | FM-08: Common Cause | TSR-AIQL-012, -013, -007 | FI-07 | Mandatory |
+| SG-EMV-01 | FM-09: Speaker Failure (opt) | TSR-AIQL-015, -019, -007 | FI-10 | Optional |
+| SG-EMV-01 | FM-10: Coupling Degradation (opt) | TSR-AIQL-016, -019, -007 | FI-11 | Optional |
+| SG-EMV-01 | FM-11: BIST False Failure (opt) | TSR-AIQL-018, -019 | FI-13 | Optional |
+| SG-EMV-01 | FM-12: Mic Blockage/Env. Damage | TSR-AIQL-020, -021, -022, -019 | FI-15, FI-16, FI-17 | Mandatory |
+| SG-EMV-01 | FM-13: Cross-Mic Plausibility | TSR-AIQL-021, -022, -019 | FI-16 | Mandatory |
 
 ### 13.2 TSR → AoU Traceability
 
@@ -1994,77 +2212,88 @@ The Safety of the Intended Functionality (ISO 21448) analysis identifies perform
 | TSR-AIQL-011 (Logging) | AoU-010 (Self-Diagnostic) | Diagnostic logging includes QM self-diagnostic data |
 | TSR-AIQL-012 (Spatial FFI) | AoU-006 (Memory Isolation) | QM driver must be compatible with MPU configuration |
 | TSR-AIQL-013 (Temporal FFI) | AoU-007 (CPU Budget) | QM driver must comply with CPU budget for FFI |
-| TSR-AIQL-015 (BIST Signal Gen) | AoU-011 (Speaker Availability) | BIST requires speaker with specified frequency range and SPL |
-| TSR-AIQL-016 (BIST Spectral Match) | AoU-009 (In-Cabin Mic Specs), AoU-012 (Acoustic Coupling) | Spectral match depends on mic placement and acoustic coupling |
-| TSR-AIQL-017 (Startup BIST) | AoU-011 (Speaker Availability), AoU-012 (Acoustic Coupling) | Startup BIST requires functional speaker and adequate coupling |
-| TSR-AIQL-018 (Periodic BIST) | AoU-011 (Speaker Availability), AoU-012 (Acoustic Coupling) | Periodic BIST requires maintained acoustic path |
-| TSR-AIQL-019 (MRM on BIST Failure) | — | AIQL internal behavior; no AoU dependency |
+| TSR-AIQL-015 (BIST Signal Gen, opt) | AoU-011 (Speaker Availability) | BIST requires speaker with specified frequency range and SPL |
+| TSR-AIQL-016 (BIST Spectral Match, opt) | AoU-009 (Exterior Mic Specs), AoU-012 (Acoustic Coupling) | Spectral match depends on mic placement and acoustic coupling |
+| TSR-AIQL-017 (Startup BIST, opt) | AoU-011 (Speaker Availability), AoU-012 (Acoustic Coupling) | Startup BIST requires functional speaker and adequate coupling |
+| TSR-AIQL-018 (Periodic BIST, opt) | AoU-011 (Speaker Availability), AoU-012 (Acoustic Coupling) | Periodic BIST requires maintained acoustic path |
+| TSR-AIQL-019 (MRM on Persistent Failure) | — | AIQL internal behavior; no AoU dependency |
+| TSR-AIQL-020 (Noise Profile) | AoU-009 (Exterior Mic Specs), AoU-013 (A2B Frame Structure) | Noise profile analysis requires functioning exterior mics and known frame format |
+| TSR-AIQL-021 (Cross-Mic Plausibility) | AoU-009 (Exterior Mic Specs), AoU-014 (Mic Quantity) | Cross-mic comparison requires >= 2 functioning exterior mics |
+| TSR-AIQL-022 (Input Sanitization) | AoU-008 (Signal Range), AoU-009 (Exterior Mic Specs) | Sanitization checks depend on defined data format and expected mic behavior |
 
 ### 13.3 Failure Mode Coverage Analysis
 
 Every failure mode must be addressed by at least one TSR. Every TSR must address at least one failure mode.
 
-| FM | TSR Coverage Count | TSR IDs |
-|----|-------------------|---------|
-| FM-01 | 4 | TSR-AIQL-001, -002, -007, -016 |
-| FM-02 | 3 | TSR-AIQL-003, -005, -007 |
-| FM-03 | 4 | TSR-AIQL-001, -002, -004, -007 |
-| FM-04 | 2 | TSR-AIQL-005, -016 |
-| FM-05 | 0* | — (system-level: AMO multi-sensor fusion) |
-| FM-06 | 0* | — (system-level: AMO multi-sensor fusion) |
-| FM-07 | 1 | TSR-AIQL-004 |
-| FM-08 | 3 | TSR-AIQL-007, -012, -013 |
-| FM-09 | 3 | TSR-AIQL-007, -015, -019 |
-| FM-10 | 3 | TSR-AIQL-007, -016, -019 |
-| FM-11 | 2 | TSR-AIQL-018, -019 |
+| FM | TSR Coverage Count | TSR IDs | Status |
+|----|-------------------|---------|--------|
+| FM-01 | 6 | TSR-AIQL-001, -002, -007, -016 (opt), -020, -021 | Mandatory |
+| FM-02 | 3 | TSR-AIQL-003, -005, -007 | Mandatory |
+| FM-03 | 4 | TSR-AIQL-001, -002, -004, -007 | Mandatory |
+| FM-04 | 5 | TSR-AIQL-005, -016 (opt), -020, -021, -022 | Mandatory |
+| FM-05 | 0* | — (system-level: AMO multi-sensor fusion) | — |
+| FM-06 | 0* | — (system-level: AMO multi-sensor fusion) | — |
+| FM-07 | 1 | TSR-AIQL-004 | Mandatory |
+| FM-08 | 3 | TSR-AIQL-007, -012, -013 | Mandatory |
+| FM-09 | 3 | TSR-AIQL-007, -015, -019 | Optional |
+| FM-10 | 3 | TSR-AIQL-007, -016, -019 | Optional |
+| FM-11 | 2 | TSR-AIQL-018, -019 | Optional |
+| FM-12 | 4 | TSR-AIQL-020, -021, -022, -019 | Mandatory |
+| FM-13 | 3 | TSR-AIQL-021, -022, -019 | Mandatory |
 
 *FM-05 and FM-06 are classifier performance limitations (not data integrity failures). As audio is a secondary sensor, these are addressed at the system level by AMO multi-sensor fusion with primary sensors (camera, LiDAR, radar) — not by the AIQL.
 
-**Coverage check**: All 9 data integrity and BIST failure modes (FM-01 through FM-04, FM-07 through FM-11) have at least 1 AIQL TSR. FM-05 and FM-06 (classifier performance) are addressed at system level. **PASS**
+**Coverage check**: All 11 data integrity and diagnostic failure modes (FM-01 through FM-04, FM-07 through FM-13) have at least 1 AIQL TSR. FM-05 and FM-06 (classifier performance) are addressed at system level. FM-09 through FM-11 (BIST-related) are optional/customer-dependent. **PASS**
 
-| TSR | FM Coverage Count | FM IDs |
-|-----|-------------------|--------|
-| TSR-AIQL-001 | 2 | FM-01, FM-03 |
-| TSR-AIQL-002 | 2 | FM-01, FM-03 |
-| TSR-AIQL-003 | 1 | FM-02 |
-| TSR-AIQL-004 | 2 | FM-03, FM-07 |
-| TSR-AIQL-005 | 2 | FM-02, FM-04 |
-| TSR-AIQL-007 | 6 | FM-01, FM-02, FM-03, FM-08, FM-09, FM-10 |
-| TSR-AIQL-008 | 11 | All (recovery behavior) |
-| TSR-AIQL-009 | 0* | Temporal FFI (AIQL self-protection) |
-| TSR-AIQL-010 | 0* | Process requirement (all FMs) |
-| TSR-AIQL-011 | 0* | Diagnostic (all FMs, observability) |
-| TSR-AIQL-012 | 1 | FM-08 |
-| TSR-AIQL-013 | 1 | FM-08 |
-| TSR-AIQL-015 | 2 | FM-09, FM-10 |
-| TSR-AIQL-016 | 3 | FM-01, FM-04, FM-10 |
-| TSR-AIQL-017 | 2 | FM-09, FM-10 |
-| TSR-AIQL-018 | 2 | FM-10, FM-11 |
-| TSR-AIQL-019 | 2 | FM-09, FM-10 |
+| TSR | FM Coverage Count | FM IDs | Status |
+|-----|-------------------|--------|--------|
+| TSR-AIQL-001 | 2 | FM-01, FM-03 | Mandatory |
+| TSR-AIQL-002 | 2 | FM-01, FM-03 | Mandatory |
+| TSR-AIQL-003 | 1 | FM-02 | Mandatory |
+| TSR-AIQL-004 | 2 | FM-03, FM-07 | Mandatory |
+| TSR-AIQL-005 | 2 | FM-02, FM-04 | Mandatory |
+| TSR-AIQL-007 | 6 | FM-01, FM-02, FM-03, FM-08, FM-09, FM-10 | Mandatory |
+| TSR-AIQL-008 | 13 | All (recovery behavior) | Mandatory |
+| TSR-AIQL-009 | 0* | Temporal FFI (AIQL self-protection) | Mandatory |
+| TSR-AIQL-010 | 0* | Process requirement (all FMs) | Mandatory |
+| TSR-AIQL-011 | 0* | Diagnostic (all FMs, observability) | Mandatory (QM) |
+| TSR-AIQL-012 | 1 | FM-08 | Mandatory |
+| TSR-AIQL-013 | 1 | FM-08 | Mandatory |
+| TSR-AIQL-015 | 2 | FM-09, FM-10 | Optional |
+| TSR-AIQL-016 | 3 | FM-01, FM-04, FM-10 | Optional |
+| TSR-AIQL-017 | 2 | FM-09, FM-10 | Optional |
+| TSR-AIQL-018 | 2 | FM-10, FM-11 | Optional |
+| TSR-AIQL-019 | 4 | FM-09, FM-10, FM-12, FM-13 | Mandatory |
+| TSR-AIQL-020 | 3 | FM-01, FM-04, FM-12 | Mandatory |
+| TSR-AIQL-021 | 4 | FM-01, FM-04, FM-12, FM-13 | Mandatory |
+| TSR-AIQL-022 | 3 | FM-04, FM-12, FM-13 | Mandatory |
 
 *TSR-AIQL-009, -010, -011 are cross-cutting requirements (WCET, process, diagnostics) that support the overall safety mechanism integrity rather than addressing specific failure modes.
 
-**Coverage check**: All 17 TSRs address at least 1 failure mode or serve a cross-cutting safety purpose. **PASS**
+**Coverage check**: All 20 TSRs (15 mandatory + 5 optional) address at least 1 failure mode or serve a cross-cutting safety purpose. **PASS**
 
 ### 13.4 Verification Coverage
 
-| Verification Item | Failure Modes Covered | TSRs Verified |
-|-------------------|----------------------|---------------|
-| FI-01 | FM-01, FM-03 | TSR-AIQL-001, -002 |
-| FI-02 | FM-03 | TSR-AIQL-001 |
-| FI-03 | FM-02 | TSR-AIQL-003 |
-| FI-04 | FM-07 | TSR-AIQL-004 |
-| FI-05 | FM-04 | TSR-AIQL-005 |
-| FI-07 | All (data integrity) | TSR-AIQL-007, -008 |
-| FI-08 | FM-08 | TSR-AIQL-012 |
-| FI-09 | FM-08 | TSR-AIQL-013 |
-| FI-10 | FM-09 | TSR-AIQL-015, -019 |
-| FI-11 | FM-10 | TSR-AIQL-016 |
-| FI-12 | FM-09, FM-10 | TSR-AIQL-017 |
-| FI-13 | FM-10, FM-11 | TSR-AIQL-018 |
-| FI-14 | FM-09, FM-10 | TSR-AIQL-019 |
+| Verification Item | Failure Modes Covered | TSRs Verified | Status |
+|-------------------|----------------------|---------------|--------|
+| FI-01 | FM-01, FM-03 | TSR-AIQL-001, -002 | Mandatory |
+| FI-02 | FM-03 | TSR-AIQL-001 | Mandatory |
+| FI-03 | FM-02 | TSR-AIQL-003 | Mandatory |
+| FI-04 | FM-07 | TSR-AIQL-004 | Mandatory |
+| FI-05 | FM-04 | TSR-AIQL-005 | Mandatory |
+| FI-07 | All (data integrity) | TSR-AIQL-007, -008 | Mandatory |
+| FI-08 | FM-08 | TSR-AIQL-012 | Mandatory |
+| FI-09 | FM-08 | TSR-AIQL-013 | Mandatory |
+| FI-10 | FM-09 | TSR-AIQL-015, -019 | Optional |
+| FI-11 | FM-10 | TSR-AIQL-016 | Optional |
+| FI-12 | FM-09, FM-10 | TSR-AIQL-017 | Optional |
+| FI-13 | FM-10, FM-11 | TSR-AIQL-018 | Optional |
+| FI-14 | FM-09, FM-10 | TSR-AIQL-019 | Optional |
+| FI-15 | FM-01, FM-04, FM-12 | TSR-AIQL-020, -022 | Mandatory |
+| FI-16 | FM-04, FM-12, FM-13 | TSR-AIQL-021 | Mandatory |
+| FI-17 | FM-12 | TSR-AIQL-020, -021, -022 | Mandatory |
 
-**Coverage check**: All data integrity failure modes (FM-01 through FM-04, FM-07, FM-08) and BIST failure modes (FM-09, FM-10, FM-11) covered by at least one fault injection test. FM-05/FM-06 verified at system level. **PASS**
+**Coverage check**: All data integrity failure modes (FM-01 through FM-04, FM-07, FM-08), passive diagnostic failure modes (FM-12, FM-13), and optional BIST failure modes (FM-09, FM-10, FM-11) covered by at least one fault injection test. FM-05/FM-06 verified at system level. **PASS**
 
 ---
 
@@ -2075,17 +2304,21 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | OI-01 | **Audio frame interface specification**: Finalize the exact audio frame format, field ordering, and byte alignment with the audio driver development team. Current Section 4.2 is a draft proposal. | Audio SW Lead + Safety Engineering | High | TBD | Open |
 | OI-02 | **HARA alignment for SG-EMV-01**: ~~HARA-0003 row added (S2/E3/C2 → ASIL B)~~ TSC-001 now aligned to Audio_HARA.xlsx (UC-React-to-EMV), row: "Yield to Activated EMV (Highway), siren+lights, slow/stationary in front" — S3/E2/C3 → ASIL B (v0.7). Remaining: formal HARA review board approval to baseline safety goal SG-EMV-01; confirm HARA ID assignment convention. | Safety Manager | High | TBD | Partially Resolved |
 | OI-03 | **Target compute platform**: Confirm DRIVE AGX Thor (Blackwell) as the target platform for AIQL deployment within Hyperion 10 reference architecture. WCET (TSR-AIQL-009) and MPU/MIG configuration (TSR-AIQL-012) are platform-dependent. Confirm MIG partition allocation for AIQL safety-critical workload. | Platform Architecture | High | TBD | Open |
-| OI-04 | **Microphone array specifications**: ~~Confirm microphone placement (exterior vs. cabin)~~ Microphone placement confirmed as **in-cabin** (v0.4). Remaining: finalize count, model selection, and acoustic specifications for in-cabin placement. AoU-009 updated for in-cabin requirements including BIST coupling. Cabin acoustic characterization needed (see OI-09). | Audio HW Lead | Medium | TBD | Partially Resolved |
+| OI-04 | **Microphone array specifications**: ~~Confirm microphone placement (exterior vs. cabin)~~ ~~Microphone placement confirmed as in-cabin (v0.4).~~ Microphone placement updated to **exterior** (v0.9) per Hyperion 10 reference architecture. Remaining: finalize count (minimum 2, recommended 4+), model selection, IP67 environmental qualification, and acoustic specifications for exterior placement. AoU-009 updated for exterior requirements. See OI-17 for program-specific mic count and placement confirmation. | Audio HW Lead | Medium | TBD | Partially Resolved |
 | OI-05 | **Siren classifier output format**: Confirm the classifier output structure (Section 4.2.3) with the audio ML team. The direction-of-arrival field and confidence metric format need alignment. | Audio ML Team | Medium | TBD | Open |
 | OI-06 | **FTTI confirmation**: Validate the 500 ms FTTI through system-level timing analysis including worst-case audio processing latency, AMO inference time, and vehicle dynamic response. Current allocation (Section 10.4) is preliminary. | System Safety + Vehicle Dynamics | High | TBD | Open |
 | OI-07 | **System-level verification of FM-05/FM-06**: Verify that AMO multi-sensor fusion adequately mitigates classifier false negatives (FM-05) and false positives (FM-06) when audio is used as a secondary sensor. This is outside the AIQL scope but must be confirmed at the system level. | System Safety + Perception Team | High | TBD | Open |
-| OI-08 | **Speaker specifications for BIST**: Select specific in-cabin speaker(s) for BIST use. Confirm frequency response, SPL output at mic positions, THD, and independent DAC access (AoU-011). Determine if existing entertainment speakers can be shared or if a dedicated BIST speaker is needed. | Audio HW Lead | High | TBD | Open |
-| OI-09 | **Cabin acoustic characterization**: Perform acoustic transfer function measurement from BIST speaker(s) to each in-cabin microphone across 500-3000 Hz. Characterize variation across temperature (-40 C to +85 C), HVAC modes, and cabin configurations (doors/windows open/closed, seats occupied/empty). Required to calibrate BIST spectral match reference (TSR-AIQL-016) and validate AoU-012. | Audio HW Lead + Safety Engineering | High | TBD | Open |
-| OI-10 | **BIST signal cancellation validation**: Validate that the BIST signal cancellation algorithm (TSR-AIQL-018) achieves >= 30 dB attenuation in representative cabin conditions. Determine if adaptive cancellation is needed or if a fixed reference subtraction is sufficient. | Safety Engineering + Audio SW Lead | Medium | TBD | Open |
-| OI-11 | **BIST false failure rate target**: Define quantitative target for false BIST failure rate (preliminary target: < 1 per 1000 driving hours). Perform statistical analysis of expected false failure rate based on cabin noise profiles and BIST signal design. If target is not met, consider noise-adaptive BIST scheduling (OI-14). | Safety Engineering | Medium | TBD | Open |
-| OI-12 | **MRM interface specification**: Define the exact interface between AIQL and the vehicle safety manager for MRM requests. Specify signal format, communication channel (dedicated GPIO, safety bus message, shared memory flag), latency requirements, and acknowledgment protocol. | Safety Engineering + Vehicle Platform | High | TBD | Open |
-| OI-13 | **Periodic BIST interval optimization**: The 60-second periodic BIST interval is a preliminary value. Optimize based on: (a) expected failure rate dynamics (how fast can acoustic coupling degrade?); (b) cabin audio intrusion tolerance; (c) BIST signal cancellation effectiveness; (d) false failure rate impact. Consider adaptive interval based on vehicle state (longer at highway, shorter in city). | Safety Engineering | Low | TBD | Open |
-| OI-14 | **ANC interaction with BIST**: If the vehicle has Active Noise Cancellation (ANC), determine whether ANC will attenuate or distort the BIST signal. If so, define coordination protocol (suspend ANC during BIST window, or account for ANC transfer function in spectral match reference). | Audio HW Lead + Safety Engineering | Medium | TBD | Open |
+| OI-08 | **Speaker specifications for BIST** *(customer-dependent — only applicable if exterior speaker is available for acoustic loopback)*: Select specific exterior speaker for BIST use. Confirm frequency response, SPL output at mic positions, THD, and independent DAC access (AoU-011). Determine if existing exterior speaker (backup warning, AVAS) can be shared or if a dedicated BIST speaker is needed. Not applicable for Hyperion reference platform (no speaker). | Audio HW Lead | Low (customer-dependent) | TBD | Open — customer-dependent |
+| OI-09 | **Acoustic characterization** *(customer-dependent for BIST; mandatory for passive checks)*: For BIST-equipped platforms: perform acoustic transfer function measurement from BIST speaker to each exterior microphone across 500-3000 Hz; characterize variation across temperature, wind speed, and ambient noise conditions. For all platforms: characterize exterior microphone noise profiles for noise profile monitoring (TSR-AIQL-020) calibration — measure expected noise floor, spectral shape, and cross-mic RMS variation at representative vehicle speeds. | Audio HW Lead + Safety Engineering | Medium | TBD | Open |
+| OI-10 | **BIST signal cancellation validation** *(customer-dependent — only applicable if acoustic loopback BIST is enabled)*: Validate that the BIST signal cancellation algorithm (TSR-AIQL-018) achieves >= 30 dB attenuation in representative environmental conditions. Determine if adaptive cancellation is needed or if a fixed reference subtraction is sufficient. Not applicable for Hyperion reference platform. | Safety Engineering + Audio SW Lead | Low (customer-dependent) | TBD | Open — customer-dependent |
+| OI-11 | **BIST false failure rate target** *(customer-dependent — only applicable if acoustic loopback BIST is enabled)*: Define quantitative target for false BIST failure rate (preliminary target: < 1 per 1000 driving hours). Perform statistical analysis of expected false failure rate based on environmental noise profiles and BIST signal design. If target is not met, consider noise-adaptive BIST scheduling (OI-14). Not applicable for Hyperion reference platform. | Safety Engineering | Low (customer-dependent) | TBD | Open — customer-dependent |
+| OI-12 | **MRM interface specification**: Define the exact interface between AIQL and THOR FSI for MRM requests via the SOC_Error / FSI_I2C safety signaling path. Specify signal format, error codes, latency requirements, and acknowledgment protocol. See also OI-16 for THOR FSI path confirmation. | Safety Engineering + Vehicle Platform | High | TBD | Open |
+| OI-13 | **Periodic BIST interval optimization** *(customer-dependent — only applicable if acoustic loopback BIST is enabled)*: The 60-second periodic BIST interval is a preliminary value. Optimize based on: (a) expected failure rate dynamics (how fast can acoustic coupling degrade?); (b) environmental audio intrusion tolerance; (c) BIST signal cancellation effectiveness; (d) false failure rate impact. Consider adaptive interval based on vehicle state (longer at highway, shorter in city). Not applicable for Hyperion reference platform. | Safety Engineering | Low (customer-dependent) | TBD | Open — customer-dependent |
+| OI-14 | **ANC interaction with BIST** *(customer-dependent — only applicable if acoustic loopback BIST is enabled and vehicle has ANC)*: If the vehicle has Active Noise Cancellation (ANC), determine whether ANC will attenuate or distort the BIST signal. If so, define coordination protocol (suspend ANC during BIST window, or account for ANC transfer function in spectral match reference). Not applicable for Hyperion reference platform. | Audio HW Lead + Safety Engineering | Low (customer-dependent) | TBD | Open — customer-dependent |
+| OI-15 | **A2B frame structure confirmation**: Confirm CRC, alive counter, sequence counter, and timestamp fields are present in A2B frames as delivered to Thor Main (per AoU-013). Confirm with systems engineering that the A2B transceiver (Maarva) preserves these fields without modification. Verify end-to-end integrity across A2B bus. | Systems Engineering + Audio HW Lead | High | TBD | Open |
+| OI-16 | **THOR FSI safety signaling path**: Confirm SOC_Error / FSI_I2C interface specification for AIQL error reporting and MRM requests to THOR FSI. Define error codes for AIQL qualification failures (passive check failure, BIST failure if applicable). Confirm latency from SOC_Error assertion to THOR FSI recognition. | Safety Engineering + Platform Architecture | High | TBD | Open |
+| OI-17 | **Exterior mic quantity and placement**: Confirm number and placement of exterior microphones for upcoming programs. Minimum 2 required for cross-mic plausibility (TSR-AIQL-021); recommended 4+ for robust coverage and single-channel fault tolerance. Placement affects wind noise exposure, debris risk, and siren detection coverage. Coordinate with vehicle integration and acoustic design teams. | Audio HW Lead + Vehicle Integration | High | TBD | Open |
+| OI-18 | **NDAS EVD implementation commitment**: NDAS perception team has not committed to Emergency Vehicle Detection (EVD) as a shipping feature. The AIQL qualifies audio input for AMO, but AMO's EVD module (siren fusion with primary sensors) must be implemented for the audio input to contribute to the safety goal SG-EMV-01. Resolve ownership of EVD implementation before finalizing this TSC. If EVD is not implemented, the AIQL still provides FFI for the audio input path but the end-to-end safety argument for SG-EMV-01 is incomplete. | Safety Engineering + NDAS Perception Team | Critical | TBD | Open |
 
 ---
 
@@ -2100,10 +2333,12 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | **DRIVE AGX Thor** | NVIDIA's centralized AV compute platform based on the Blackwell architecture (2x Thor SoCs, 2000+ FP4 TFLOPS). Hosts DRIVE OS, DriveWorks, and NDAS DRIVE AV. |
 | **DRIVE Hyperion 10** | NVIDIA's production-ready AV reference architecture: DRIVE AGX Thor compute + qualified sensor suite (14 cameras, 9 radars, 1 lidar, 12 ultrasonics, 1 exterior mic array, 4 interior cameras). |
 | **NDAS (DRIVE AV)** | NVIDIA DRIVE AV Solution — the full-stack autonomous driving software (prediction, mapping, planning, control, Safety Force Field) running on DRIVE AGX Thor. AMO feeds perception outputs into NDAS for driving decisions. |
+| **A2B** | Automotive Audio Bus — a high-bandwidth, low-latency digital audio bus used to connect microphones, speakers, and other audio peripherals to the SoC. Supports up to 16 channels on the Maarva transceiver. |
 | **ANC** | Active Noise Cancellation — system that generates anti-phase sound to reduce cabin noise |
 | **AoU** | Assumption of Use — interface contract on the QM audio subsystem per ISO 26262-8 Clause 12 |
 | **ASIL** | Automotive Safety Integrity Level — risk classification per ISO 26262 (QM, A, B, C, D) |
-| **BIST** | Built-In Self-Test — a self-diagnostic mechanism that verifies hardware path integrity using a known test signal |
+| **BIST** | Built-In Self-Test — a self-diagnostic mechanism that verifies hardware path integrity using a known test signal. In this architecture, acoustic loopback BIST is **optional and customer-dependent** — it requires an exterior speaker. The primary diagnostic approach uses passive qualification checks (noise profile, cross-mic plausibility, input sanitization). |
+| **BP** | Base Platform — Thor Main software partition. The AIQL runs on Thor Main as part of the BP SW. |
 | **CRC-32** | Cyclic Redundancy Check with 32-bit polynomial — used for data integrity verification |
 | **dBFS** | Decibels relative to Full Scale — amplitude measurement where 0 dBFS is the maximum digital level |
 | **E2E** | End-to-End protection — communication protection mechanism per AUTOSAR |
@@ -2113,6 +2348,7 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | **FTTI** | Fault Tolerant Time Interval — maximum time from fault occurrence to safe state |
 | **HiL** | Hardware-in-the-Loop — test environment with real target hardware and simulated vehicle |
 | **LFM** | Latent Fault Metric — percentage of latent faults covered by safety mechanisms |
+| **Maarva** | ECU / A2B transceiver that accepts A2B microphone input (up to 16 channels) and delivers audio frames to Thor Main SoC. Part of the Base Platform board. |
 | **MC/DC** | Modified Condition/Decision Coverage — structural coverage metric required for ASIL B |
 | **MMU** | Memory Management Unit — hardware mechanism for virtual memory and protection |
 | **MPU** | Memory Protection Unit — hardware mechanism for spatial memory isolation |
@@ -2129,6 +2365,7 @@ Every failure mode must be addressed by at least one TSR. Every TSR must address
 | **SPFM** | Single Point Fault Metric — percentage of single-point faults covered by safety mechanisms |
 | **TC** | Triggering Condition — SOTIF concept for conditions that trigger performance limitations |
 | **THD** | Total Harmonic Distortion — ratio of harmonic content to fundamental, measuring signal purity |
+| **THOR FSI** | Thor Functional Safety Island — the safety MCU on the Base Platform board. Receives safety signaling from Thor Main (BP SW) via SOC_Error / FSI_I2C interfaces. Responsible for watchdog monitoring, MRM request forwarding, and system-level safety management. |
 | **TSC** | Technical Safety Concept — system-level safety design document per ISO 26262-4 |
 | **TSR** | Technical Safety Requirement — individual requirement within a TSC |
 | **WCET** | Worst-Case Execution Time — maximum time a software function takes to execute |
@@ -2171,13 +2408,13 @@ The following table provides the evidence chain supporting the ASIL decompositio
 
 | Evidence Item | ISO 26262 Clause | Content | Status |
 |--------------|-------------------|---------|--------|
-| Decomposition scheme | Part 9, 5.4.2 | ASIL B = ASIL B(AIQL) + QM(Audio) + QM(Speaker) — documented in Section 8.1 | Complete |
+| Decomposition scheme | Part 9, 5.4.2 | ASIL B = ASIL B(AIQL on Thor Main BP) + QM(Audio HW) + QM(Audio SW) + QM(Speaker HW, optional) — documented in Section 8.1 | Complete |
 | Independence argument | Part 9, 5.4.3 | Hardware, software, and common cause analysis — documented in Section 8.2 | Complete |
-| Sufficient safety mechanisms | Part 9, 5.4.4 | 17 TSRs (16 ASIL B + 1 QM) covering all data integrity and BIST failure modes — documented in Section 7; FM-05/FM-06 addressed at system level | Complete |
-| Assumptions of Use | Part 8, 12.4.2 | 12 AoUs on QM audio subsystem — documented in Section 9 | Complete |
+| Sufficient safety mechanisms | Part 9, 5.4.4 | 20 TSRs (15 mandatory ASIL B + 5 optional ASIL B + 1 QM) covering all data integrity, passive diagnostic, and BIST failure modes — documented in Section 7; FM-05/FM-06 addressed at system level | Complete |
+| Assumptions of Use | Part 8, 12.4.2 | 14 AoUs (12 mandatory + 2 optional) on QM audio subsystem — documented in Section 9 | Complete |
 | FFI analysis | Part 9, 7 | Spatial, temporal, communication FFI — documented in Section 6.2 | Complete |
 | Dependent failure analysis | Part 9, 7 | Common cause analysis — documented in Section 8.2.3 | Complete |
-| Verification of decomposition | Part 9, 5.4.5 | Fault injection campaign (149 tests) — documented in Section 11.3 | Planned |
+| Verification of decomposition | Part 9, 5.4.5 | Fault injection campaign (123 mandatory + 50 optional = 173 total tests) — documented in Section 11.3 | Planned |
 
 ### Appendix D: E2E Protection Profile Rationale
 
@@ -2199,23 +2436,25 @@ Standard E2E Profile 1 is designed for CAN/FlexRay messages (8-64 bytes). The au
 3. **High data rate**: 20 Hz with 19 KB frames (~375 KB/s) — requires efficient checking within 5 ms WCET
 4. **Timestamp required**: Audio freshness is critical for siren detection temporal correlation — timestamps are essential but not part of standard E2E Profile 1
 
-### Appendix E: BIST Loopback Architecture
+### Appendix E: BIST Loopback Architecture (Optional, Customer-Dependent)
+
+**Note**: This appendix describes the acoustic loopback BIST architecture that is only active when an exterior speaker (e.g., backup warning speaker, AVAS/pedestrian alerting speaker) is available on the vehicle platform. The Hyperion reference platform does not include an exterior speaker for BIST. If no speaker is present, BIST is disabled and passive qualification checks (TSR-AIQL-020, -021, -022) serve as the sole diagnostic approach.
 
 #### E.1 BIST Signal Path
 
 ```
 +==================+     +============+     +===============+     +=============+
-| BIST Signal      |---->| Codec DAC  |---->| In-Cabin      |---->| Acoustic    |
+| BIST Signal      |---->| Codec DAC  |---->| Exterior      |---->| Acoustic    |
 | Generator        |     |            |     | Speaker       |     | Air Path    |
-| (within AIQL)    |     | (QM HW)    |     | (QM HW)      |     | (cabin)     |
+| (within AIQL)    |     | (QM HW)    |     | (QM HW)      |     | (exterior)  |
 +==================+     +============+     +===============+     +=============+
                                                                        |
                               +----------------------------------------+
                               |
                               v
 +=============+     +============+     +==================+
-| In-Cabin    |---->| Codec ADC  |---->| BIST Spectral    |
-| Microphone  |     |            |     | Match Analyzer   |
+| Exterior    |---->| Codec ADC  |---->| BIST Spectral    |
+| Microphone  |     | (via A2B)  |     | Match Analyzer   |
 | (QM HW)     |     | (QM HW)    |     | (within AIQL)    |
 +=============+     +============+     +==================+
                                               |
